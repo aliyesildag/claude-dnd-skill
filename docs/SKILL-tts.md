@@ -1,165 +1,200 @@
 # Narrator TTS setup (optional)
 
-The display companion can read narrator and NPC blocks aloud via Google's Gemini Flash TTS. It's optional, off by default, and the rest of the skill works fine without it. This guide gets you a working setup in ~5 minutes using a free Google account.
+The display companion can read narrator and NPC blocks aloud. It's optional, off by default, and the rest of the skill works fine without it.
 
-If you skip this guide, the display still renders text exactly as it does today — no audio, no warnings, no behavior change.
+Two backends ship:
+
+| Provider | When it's used | Cost |
+|---|---|---|
+| **Azure Speech** *(default)* | whenever an Azure key resolves | **free** up to 500,000 characters/month, permanently |
+| Gemini Flash TTS | fallback, when only a Gemini key is present | ~$0.039 per minute of audio |
+
+Azure is the recommended path: its free tier is large enough for a heavy table, and its Turkish voices are a generation ahead of anything else free. Set `DND_TTS_PROVIDER=gemini` to force the fallback.
+
+If you configure neither, the display renders text exactly as it does today — no audio, no warnings, no behavior change.
 
 ## What you get
 
 - A speaker button at the bottom of every narrator and NPC block. Click to hear that block read aloud.
-- A 9-voice dropdown (4 male, 5 female) sitting next to the speaker button. Change voice mid-session.
-- An optional **Auto Narrate** toggle in the top-right audio controls. When on, every new narrator/NPC block auto-plays in **your browser only** — perfect for a TV or main-display cast device while player phones stay quiet.
-- Multi-language support — Gemini auto-detects the language from the text, so a campaign played in Spanish, Japanese, Hindi, or any of the [24 supported languages](https://ai.google.dev/gemini-api/docs/speech-generation) just works.
+- A voice dropdown next to it. Change voice mid-session; the choice persists per-campaign.
+- An optional **Auto Narrate** toggle in the top-right audio controls. When on, every new narrator/NPC block auto-plays in **your browser only** — for a TV or cast device while player phones stay quiet. **Off by default**, and worth leaving off: see *Watching the quota* below.
+- A running character counter so you always know where the month stands against the free quota.
 
 ## What it costs
 
-Gemini Flash TTS bills per character. Typical narration block is ~600 characters; current pricing is ~$0.001 per block. A 3-hour session with ~30 narration blocks costs roughly 3¢. **The free tier handles casual use** — you only need to enable billing if you hit rate-limit errors or if you're a new AI Studio account (Google requires prepaid billing for new accounts as of 2026).
+**Azure F0 (free tier): 500,000 characters per month, and it never expires.**
 
-## Setup — three steps, ~5 minutes
+Measured on this skill's own narration: **1,089 characters produce 79 seconds of speech**, so one hour of audio costs about 49,600 characters. That puts the free quota at roughly **10 hours of narration per month**.
 
-### 1. Get a Gemini API key from Google AI Studio
+Two ways to spend it:
 
-This is the easiest path. No `gcloud`, no Cloud Console, no service accounts.
+| Pattern | Audio/month | Characters | Fits in free tier? |
+|---|---|---|---|
+| Scene blocks only (~10 per session) | ~3.3 h | ~165k | yes, comfortably |
+| Auto-narrate every DM block | 11–16 h | 540k–810k | **no** |
 
-1. Visit **https://aistudio.google.com/apikey** and sign in with your Google / Gmail account. Accept the terms on first visit.
-2. Click **Create API key**. If it asks which project to use, accept the default — Google will create one.
-3. Copy the key. It looks like `AIza...` and is roughly 39 characters.
+Past 500k, Azure F0 stops serving rather than billing you — you'd have to move the resource to the S0 tier to pay for more ($16/1M characters for Neural, $22/1M for Neural HD).
 
-### 2. Save the key to your local config
+The Gemini fallback has no free tier worth planning around: measured at **$0.0386 per minute of audio**, so the same 10 hours would cost about $23.
+
+> Earlier versions of this document claimed ~$0.001 per block and ~3¢ per session for Gemini. That was wrong by roughly 27×, measured against the model the code actually calls.
+
+## Setup — Azure Speech (~10 minutes)
+
+### 1. Create a free Azure account
+
+https://azure.microsoft.com/free — Azure asks for a card to verify identity, but the F0 tier never bills. This is not the same as Google Cloud's refundable $30 prepayment.
+
+### 2. Create a Speech resource on the Free F0 tier
+
+Portal: search **speech** in the top bar → **Speech services** → **+ Create**.
+
+| Field | Value |
+|---|---|
+| Resource group | create one, e.g. `dnd` |
+| Region | any that accepts new customers — `northeurope` works when `westeurope` refuses |
+| Name | e.g. `dnd-tts` |
+| **Pricing tier** | **`Free F0`** |
+
+Or from the CLI:
+
+```bash
+az group create -n dnd -l northeurope
+az cognitiveservices account create -n dnd-tts -g dnd \
+  --kind SpeechServices --sku F0 -l northeurope --yes
+```
+
+Some regions reject new free-tier customers with `RequestDisallowedByAzure`. Try another region; the resource does not have to sit near you.
+
+### 3. Save the key and region
 
 ```bash
 mkdir -p ~/.config/claude-dnd && chmod 700 ~/.config/claude-dnd
 
-# Paste the key when prompted, press Return, then Ctrl-D:
-cat > ~/.config/claude-dnd/tts.key
+az cognitiveservices account keys list -n dnd-tts -g dnd --query key1 -o tsv \
+  > ~/.config/claude-dnd/azure-tts.key
+echo northeurope > ~/.config/claude-dnd/azure-tts.region
 
-chmod 600 ~/.config/claude-dnd/tts.key
+chmod 600 ~/.config/claude-dnd/azure-tts.key
 ```
 
-The skill reads from this path automatically. If you'd rather use an environment variable, export `DND_TTS_KEY` (or `GEMINI_API_KEY`) instead and skip the key file — env vars take precedence.
+Environment variables take precedence if you prefer them: `DND_AZURE_TTS_KEY` (or `AZURE_SPEECH_KEY`) and `DND_AZURE_TTS_REGION` (or `AZURE_SPEECH_REGION`).
 
-### 3. Verify
-
-From the skill base directory:
+### 4. Verify
 
 ```bash
 python3 display/tts.py --test
 ```
 
-You should see:
-
 ```
-API key source: file:/Users/you/.config/claude-dnd/tts.key
-Model: gemini-2.5-flash-preview-tts
-Voice: Enceladus
-Text:  'Hello, narrator voice test. The torchlit hall awaits.'
-Calling Gemini Flash TTS…
-  OK — received 76800 bytes of L16 PCM (24 kHz mono).
-```
-
-To also hear it (macOS only):
-
-```bash
-python3 display/tts.py --test --speak
+Provider:   azure
+Key source: file:/home/you/.config/claude-dnd/azure-tts.key
+Region:     northeurope
+Voice:      tr-TR-Aydın:MAI-Voice-2
+Text:       'Höyüğün ağzı önünüzde açılıyor…'
+Synthesizing…
+  OK — 264,000 bytes L16 PCM (24 kHz mono), 5.5s of audio in 2.7s
 ```
 
-If verification fails, check the **Troubleshooting** table at the bottom.
+Add `--speak` to hear it (tries `paplay`, `afplay`, then `aplay`).
 
-## Using it during a session
+## Setup — Gemini fallback
 
-Once the key is configured and the display companion is running:
+Only needed if you can't or won't create an Azure resource.
 
-- A small speaker icon appears at the bottom-right of every narrator (`.dm-block`) and NPC (`.npc-block`) block. Click to play. Click again to stop.
-- A **Voices** dropdown next to it lets you switch narrator voice. The selection persists per-campaign in `state.md → ## Session Flags → tts_voice: <name>`.
-- The **Auto Narrate** row in the top-right audio controls is per-browser — toggle it on for your TV cast, off on your player phones. Setting is saved in `localStorage`.
+1. Get a key at **https://aistudio.google.com/apikey**.
+2. Save it to `~/.config/claude-dnd/tts.key` (`chmod 600`), or export `DND_TTS_KEY` / `GEMINI_API_KEY`.
 
-Player input blocks, dice-roll blocks, and tutor/help blocks intentionally **don't** get a speaker button — they're metadata, not narrative voice. The 2000-character cap on the synthesis endpoint is the upper bound; longer narration blocks are truncated server-side.
+Be aware of what you're accepting: the model is a preview model, and measured latency across three runs of the same 77-second block was **46s, 188s and 251s**, with two of five calls returning `503`. It is not reliable for live narration at the table.
 
 ## Voice catalog
 
-Curated 9-voice subset from Gemini's 30-voice catalog, scoped for narrative DM voices.
+The dropdown follows whichever provider is active. For Azure, the tr-TR catalog:
 
-| Group | Voice | Notes |
-|---|---|---|
-| Male | Charon | Low, gravelly — heavies, villains |
-| Male | **Enceladus** *(default)* | Deep, measured — classic narrator |
-| Male | Fenrir | Rough, growling — feral characters |
-| Male | Umbriel | Soft, reflective — sages and elders |
-| Female | Aoede | Clear, bright — heroic / informative |
-| Female | Gacrux | Mature, warm — innkeepers, mentors |
-| Female | Kore | Youthful, energetic |
-| Female | Vindemiatrix | Crisp, formal — nobles, scholars |
-| Female | Zephyr | Light, airy — fey, sprites |
+| Group | Voice id | Shown as | Notes |
+|---|---|---|---|
+| Male | **`tr-TR-Aydın:MAI-Voice-2`** *(default)* | Aydın HD | Best quality. ~13s for 80s of audio |
+| Male | `tr-TR-Aydın:MAI-Voice-2-Flash` | Aydın Flash | Faster, slightly flatter |
+| Male | `tr-TR-AhmetNeural` | Ahmet | Previous generation — noticeably robotic on long narration |
+| Female | `tr-TR-Elif:MAI-Voice-2` | Elif HD | Best quality. ~6s for 79s of audio |
+| Female | `tr-TR-Elif:MAI-Voice-2-Flash` | Elif Flash | Faster, slightly flatter |
+| Female | `tr-TR-EmelNeural` | Emel | Previous generation |
 
-To expand the dropdown to Gemini's full 30 voices, edit `_TTS_VOICES_MALE` / `_TTS_VOICES_FEMALE` in `display/templates/index.html` and add the new names to `VALID_VOICES` in `display/tts.py`. The full catalog is documented at [Google's speech-generation guide](https://ai.google.dev/gemini-api/docs/speech-generation).
+A reasonable split for a table: HD for the narrator, Flash for NPC chatter.
 
-## Per-browser cost surfacing
+To use a different locale, list what your resource offers and edit `AZURE_VOICES_MALE` / `AZURE_VOICES_FEMALE` in `display/tts.py`:
 
-Each player clicking the speaker button on the same narration block produces a **separate** call to Gemini — there's no server-side caching by content hash. A 4-player table where everyone clicks every block roughly 4× the per-block cost. If that becomes a concern, two practical mitigations:
+```bash
+curl -s -H "Ocp-Apim-Subscription-Key: $(cat ~/.config/claude-dnd/azure-tts.key)" \
+  "https://$(cat ~/.config/claude-dnd/azure-tts.region).tts.speech.microsoft.com/cognitiveservices/voices/list" \
+  | python3 -c "import sys,json;[print(v['ShortName']) for v in json.load(sys.stdin) if v['Locale']=='tr-TR']"
+```
 
-1. Use **Auto Narrate on the casting TV only** — players hear the audio from the TV speaker and don't click their own phones.
-2. Set a daily spend cap on your Google billing project at [console.cloud.google.com/billing](https://console.cloud.google.com/billing).
+The voice selection persists per-campaign in `state.md → ## Session Flags → tts_voice: <name>`.
+
+## Watching the quota
+
+Azure exposes **no character-count metric** for Speech resources — the portal shows call counts, not characters — so the skill keeps its own tally in `~/.config/claude-dnd/tts-usage.json`, keyed by calendar month and written atomically so it survives restarts.
+
+```bash
+python3 display/tts.py --usage
+```
+
+```
+Month:    2026-09
+Calls:    42
+Chars:    48,120  (~58.2 min of audio)
+  azure      48,120 chars    42 calls
+Azure F0: 9.6% of 500,000 (451,880 left)
+```
+
+The same numbers are available at `GET /tts-usage` on the display, and every `/tts` response carries an `X-Quota-Used-Pct` header.
+
+It counts the plain text actually sent — after the 2,000-character truncation, excluding the SSML envelope — because that is what Azure meters.
+
+**The single biggest lever on the quota is Auto Narrate.** Left off (the default), you spend characters only on blocks someone deliberately clicks, which lands around 165k/month for a table playing 3–4 days a week. Turned on for every block, the same table spends 540k–810k and runs out. If you want it on, put it on the casting TV only — each player who clicks the same block makes a *separate* synthesis call, since nothing is cached by content hash.
+
+## Using it during a session
+
+- A speaker icon appears at the bottom-right of every narrator (`.dm-block`) and NPC (`.npc-block`) block. Click to play, click again to stop.
+- Player input, dice-roll and tutor blocks intentionally **don't** get one — they're metadata, not narrative voice.
+- The 2,000-character cap is the upper bound per request; longer blocks are truncated server-side. Azure F0 also allows only 20 requests per 60 seconds and the client backs off automatically on `429`.
 
 ## Multi-language sessions
 
-Gemini Flash TTS auto-detects the input language from the text content. To play a Spanish-language campaign, just narrate in Spanish — the same `/tts` endpoint comes back synthesized correctly. The voice catalog stays identical across languages.
+Both backends detect the language from the text. Azure voices are locale-specific, though — a `tr-TR` voice reading Spanish will sound wrong, so switch the catalog in `display/tts.py` if you change table language. Gemini's voices are locale-neutral.
 
-To also wire up SFX trigger packs (sword-clash sounds, magic shimmer, etc.) for non-English narration, set the active SFX languages either via environment:
+SFX trigger packs are configured separately, either via environment:
 
 ```bash
-export DND_SFX_LANGUAGES=en,es     # English first, then Spanish
+export DND_SFX_LANGUAGES=en,tr     # English first, then Turkish
 ```
 
 …or per-campaign via `state.md → ## Session Flags`:
 
 ```
-sfx_languages: en,zh
+sfx_languages: tr,en
 ```
 
-The skill currently ships SFX packs for all 24 Gemini-supported languages (`ar`, `bn`, `de`, `en`, `es`, `fr`, `hi`, `id`, `it`, `ja`, `ko`, `mr`, `nl`, `pl`, `pt`, `ro`, `ru`, `ta`, `te`, `th`, `tr`, `uk`, `vi`, `zh`). Community PRs to extend any pack are welcome.
-
-## Path B — `gcloud` restricted key (advanced, optional)
-
-If you already use the `gcloud` CLI and would rather mint a key scoped to *only* the TTS API — so a leak can't reach Cloud Storage, BigQuery, or other Google services on the same project — use this path:
-
-```bash
-PROJ=my-dnd-tts                  # any globally-unique project id
-BILLING=YOUR-BILLING-ID          # gcloud billing accounts list
-
-gcloud projects create "$PROJ"
-gcloud billing projects link "$PROJ" --billing-account="$BILLING"
-gcloud services enable generativelanguage.googleapis.com --project="$PROJ"
-
-mkdir -p ~/.config/claude-dnd && chmod 700 ~/.config/claude-dnd
-gcloud alpha services api-keys create \
-  --project="$PROJ" \
-  --display-name="claude-dnd-tts" \
-  --api-target=service=generativelanguage.googleapis.com \
-  --format='value(response.keyString)' \
-  > ~/.config/claude-dnd/tts.key
-chmod 600 ~/.config/claude-dnd/tts.key
-```
-
-The `--api-target` restriction means a leaked key can only call `generativelanguage.googleapis.com` on this specific project. Disable / rotate without affecting any other surface.
+Packs ship for `ar`, `bn`, `de`, `en`, `es`, `fr`, `hi`, `id`, `it`, `ja`, `ko`, `mr`, `nl`, `pl`, `pt`, `ro`, `ru`, `ta`, `te`, `th`, `tr`, `uk`, `vi`, `zh`.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| `python3 display/tts.py --test` says "API key: unset" | No env var **and** no key file — save your key to `~/.config/claude-dnd/tts.key`. |
-| Speaker button shows "TTS 401" | API key invalid or disabled — re-mint at https://aistudio.google.com/apikey. |
-| Speaker button shows "TTS 403" | Key not authorized for `generativelanguage.googleapis.com` (Path B keys), or billing not configured on a new AI Studio account. |
-| Speaker button shows "TTS 429" | Free-tier rate limit, or new AI Studio account without billing — enable billing at https://aistudio.google.com or set a prepaid balance. |
-| Speaker button shows "TTS 503" | Server reports TTS not configured — re-verify the key file and restart the display. |
-| Audio doesn't play but no error label | Check device volume; on iOS Safari, click the speaker once to grant the AudioContext gesture, then auto-narrate will work for the rest of the session. |
-| 1-3 second delay before audio starts | Normal — Gemini Flash TTS synthesis latency. Type Speed `Fast` paired with auto-narrate gives the tightest pairing of text and voice. |
+| `--test` says `Key source: unset` | No env var **and** no key file. Save the key to `~/.config/claude-dnd/azure-tts.key`. |
+| `--test` reports provider `gemini` when you wanted Azure | The Azure key file is missing or empty; Gemini's key wins by fallback. Check with `python3 display/tts.py --voices`. |
+| `TTS 401` | Azure key wrong, or the key belongs to a different region than `azure-tts.region`. |
+| `TTS 429` | F0's 20-requests-per-60-seconds limit, or the 500k monthly quota is spent. Check `--usage`. |
+| `RequestDisallowedByAzure` on create | That region isn't accepting new free-tier customers. Pick another. |
+| `TTS 503` | Server reports TTS not configured — re-verify the key file and restart the display. |
+| Audio doesn't play, no error label | Check device volume; on iOS Safari click the speaker once to grant the AudioContext gesture, then auto-narrate works for the rest of the session. |
+| Long pause before audio on Gemini | Expected. The preview model has been measured at 46–251s per block. Switch to Azure. |
 
 ## How to disable
 
-Delete the key file:
-
 ```bash
-rm ~/.config/claude-dnd/tts.key
+rm ~/.config/claude-dnd/azure-tts.key ~/.config/claude-dnd/tts.key
 ```
 
-The speaker buttons disappear from the display on next page load. Nothing else changes.
+Speaker buttons disappear on next page load. Nothing else changes. The usage tally is left in place; delete `~/.config/claude-dnd/tts-usage.json` if you want it gone too.

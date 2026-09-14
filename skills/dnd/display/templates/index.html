@@ -6388,16 +6388,37 @@ document.getElementById('speed-row').addEventListener('click', () => {
 // can toggle it on without affecting player phones.
 // ═══════════════════════════════════════════════════════════════════
 
-const _TTS_VOICES_MALE   = ['Charon', 'Enceladus', 'Fenrir', 'Umbriel'];
-const _TTS_VOICES_FEMALE = ['Aoede', 'Gacrux', 'Kore', 'Vindemiatrix', 'Zephyr'];
+// Rendered server-side — the catalog depends on which provider holds a key,
+// and Azure's tr-TR voices have nothing in common with Gemini's names.
+const _TTS_VOICES_MALE   = {{ tts_voices_male|tojson }};
+const _TTS_VOICES_FEMALE = {{ tts_voices_female|tojson }};
+
+// Azure ships ids like `tr-TR-Aydın:MAI-Voice-2`. The dropdown shows `Aydın HD`
+// so the list stays readable from across the room; the id is what gets sent.
+function _ttsVoiceLabel(v) {
+  if (!v.startsWith('tr-TR-')) return v;            // Gemini names pass through
+  const s = v.slice(6);
+  if (s.endsWith(':MAI-Voice-2-Flash')) return s.slice(0, -18) + ' Flash';
+  if (s.endsWith(':MAI-Voice-2'))       return s.slice(0, -12) + ' HD';
+  if (s.endsWith('Neural'))             return s.slice(0, -6);
+  return s;
+}
 
 const _ttsAvailableMeta = document.querySelector('meta[name="tts-available"]');
 const _TTS_AVAILABLE = _ttsAvailableMeta && _ttsAvailableMeta.getAttribute('content') === '1';
 
 const _narratorVoiceMeta = document.querySelector('meta[name="narrator-voice"]');
-let _ttsVoice = (_narratorVoiceMeta && _narratorVoiceMeta.getAttribute('content'))
-  || localStorage.getItem('dnd_tts_voice')
-  || 'Enceladus';
+const _TTS_VOICES_ALL = _TTS_VOICES_MALE.concat(_TTS_VOICES_FEMALE);
+
+// A browser that used the display before the provider changed still has the
+// old provider's voice in localStorage. The server coerces unknown names to
+// its default, so audio would still play — but the dropdown would show nothing
+// selected and POST /voice would 400. Drop anything outside the catalog the
+// server just rendered.
+let _ttsVoice = [
+  _narratorVoiceMeta && _narratorVoiceMeta.getAttribute('content'),
+  localStorage.getItem('dnd_tts_voice'),
+].find(v => v && _TTS_VOICES_ALL.includes(v)) || _TTS_VOICES_ALL[0] || '';
 
 let _ttsAutoNarrate = localStorage.getItem('dnd_tts_auto') === '1';
 
@@ -6537,7 +6558,7 @@ function _ttsBuildVoiceMenu() {
       const opt = document.createElement('button');
       opt.className = 'tts-voice-opt';
       opt.dataset.voice = v;
-      opt.textContent = v;
+      opt.textContent = _ttsVoiceLabel(v);
       if (v === _ttsVoice) opt.classList.add('tts-voice-active');
       opt.addEventListener('click', e => {
         e.stopPropagation();

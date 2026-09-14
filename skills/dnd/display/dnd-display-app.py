@@ -30,6 +30,7 @@ import subprocess
 import sys
 import threading
 import unicodedata
+import urllib.parse
 from collections import deque
 from typing import Optional
 from flask import Flask, Response, request, render_template, jsonify, send_from_directory
@@ -1193,6 +1194,10 @@ def index():
         lan_token=_lan_token or "",
         narrator_voice=_read_narrator_voice(),
         tts_available=(_tts is not None),
+        # The voice catalog follows the active provider, so the dropdown is
+        # rendered from the server rather than hardcoded in the template.
+        tts_voices_male=(_tts.voices_male() if _tts else []),
+        tts_voices_female=(_tts.voices_female() if _tts else []),
     )
 
 
@@ -1961,11 +1966,15 @@ def roll_pref():
     return {"ok": True, "character": char, "mode": mode}, 200
 
 
-# ─── Narrator voice (Gemini Flash TTS) ────────────────────────────────────────
+# ─── Narrator voice ───────────────────────────────────────────────────────────
 # Voice selection persists per-campaign in state.md → ## Session Flags →
 # `tts_voice: <name>`. Read at /index render, written by POST /voice.
-
-_VOICE_PAT = re.compile(r"^\s*tts_voice:\s*([A-Za-z]+)\s*$", re.MULTILINE)
+#
+# Azure voice names are not bare words — `tr-TR-Aydın:MAI-Voice-2` carries
+# hyphens, a colon, digits and a dotted-i, so the pattern has to be wider than
+# the Gemini-era [A-Za-z]+. \w is Unicode-aware in Python 3, which covers the
+# Turkish letters; the explicit class adds the punctuation Azure uses.
+_VOICE_PAT = re.compile(r"^\s*tts_voice:\s*([\w:.\-]+)\s*$", re.MULTILINE)
 
 
 def _active_campaign_name() -> Optional[str]:
@@ -2066,15 +2075,38 @@ def tts_synthesize():
         pcm = _tts.synthesize_strict(text, voice)
     except _tts.TtsError as e:
         return f"TTS upstream: {e}", 502
+    report = _tts.usage_report()
     return Response(
         pcm,
         mimetype="audio/L16;codec=pcm;rate=24000",
         headers={
             "X-Audio-Chars": str(len(text)),
-            "X-Audio-Voice": voice,
+            # HTTP headers are latin-1 only, and `tr-TR-Aydın:MAI-Voice-2`
+            # carries a dotless i. Sending it raw raises UnicodeEncodeError
+            # inside the WSGI server *after* the body is queued, which hangs
+            # the request instead of failing it. Percent-encode; decode with
+            # decodeURIComponent() on the client.
+            "X-Audio-Voice": urllib.parse.quote(voice, safe=""),
+            # Running position against the free quota, so a client can surface
+            # the month's burn without a second round trip.
+            "X-Quota-Used-Pct": str(report["free_tier_used_pct"]),
             "Cache-Control": "no-store",
         },
     )
+
+
+@app.route("/tts-usage")
+def tts_usage():
+    """This month's synthesis totals and where they sit against the free quota.
+
+    Azure exposes no character-count metric for Speech resources, so this local
+    tally is the only running answer to "how much of the 500k is left".
+    """
+    if _tts is None:
+        return jsonify({"error": "TTS module unavailable"}), 503
+    if not _token_ok():
+        return "Forbidden", 403
+    return jsonify(_tts.usage_report()), 200
 
 
 @app.route("/voice", methods=["POST"])
