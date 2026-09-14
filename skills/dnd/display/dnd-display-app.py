@@ -160,6 +160,29 @@ _RATE_WINDOW = 60    # seconds
 _RATE_MAX    = 20    # requests per window per IP
 
 
+def _client_ip() -> str:
+    """The real client address, seeing through a local reverse proxy.
+
+    Behind `cloudflared tunnel` every request reaches Flask from the connector
+    on 127.0.0.1, so remote_addr collapses all players onto one address. That
+    breaks two things: the rate bucket becomes shared (four phones exhaust a
+    20-per-minute budget between them and 429 each other), and _device_ok's
+    localhost auto-approve fires for anyone with the URL.
+
+    CF-Connecting-IP is set by Cloudflare and cannot be spoofed past it — but a
+    direct LAN client could forge the header, so it is only honored when the
+    connection itself came from loopback, i.e. from a proxy running on this
+    host. Anything else falls back to remote_addr.
+    """
+    peer = request.remote_addr or "?"
+    if peer in ("127.0.0.1", "::1"):
+        for header in ("CF-Connecting-IP", "X-Real-IP"):
+            v = (request.headers.get(header) or "").strip()
+            if v:
+                return v[:64]
+    return peer
+
+
 def _rate_ok(ip: str) -> bool:
     now = _time.time()
     with _rate_lock:
@@ -1879,7 +1902,7 @@ def narration_pref():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr or "?"):
+    if not _rate_ok(_client_ip()):
         return "Rate limited", 429
     data = request.get_json(silent=True) or {}
     try:
@@ -1913,7 +1936,7 @@ def roll_pref():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr or "?"):
+    if not _rate_ok(_client_ip()):
         return "Rate limited", 429
     data = request.get_json(silent=True) or {}
     char = (data.get("character") or "").strip()
@@ -2026,7 +2049,7 @@ def tts_synthesize():
         return "TTS module unavailable", 503
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr or "?"):
+    if not _rate_ok(_client_ip()):
         return "Rate limited", 429
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
@@ -2521,11 +2544,11 @@ def stage_input():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr or "?"):
+    if not _rate_ok(_client_ip()):
         return "Too Many Requests", 429
 
     device_id = request.headers.get("X-DND-Device", "")
-    status    = _device_ok(device_id, request.remote_addr)
+    status    = _device_ok(device_id, _client_ip())
     if status == "denied":
         return "Forbidden", 403
     if status == "pending":
@@ -2571,11 +2594,11 @@ def ready_input():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr or "?"):
+    if not _rate_ok(_client_ip()):
         return "Too Many Requests", 429
 
     device_id = request.headers.get("X-DND-Device", "")
-    status    = _device_ok(device_id, request.remote_addr)
+    status    = _device_ok(device_id, _client_ip())
     if status == "denied":
         return "Forbidden", 403
     if status == "pending":
@@ -2609,7 +2632,7 @@ def unstage_input():
         return "Forbidden", 403
 
     device_id = request.headers.get("X-DND-Device", "")
-    if _device_ok(device_id, request.remote_addr) != "approved":
+    if _device_ok(device_id, _client_ip()) != "approved":
         return "Forbidden", 403
 
     data      = request.get_json(force=True, silent=True) or {}
@@ -2634,7 +2657,7 @@ def skip_input():
         return "Forbidden", 403
 
     device_id = request.headers.get("X-DND-Device", "")
-    if _device_ok(device_id, request.remote_addr) != "approved":
+    if _device_ok(device_id, _client_ip()) != "approved":
         return "Forbidden", 403
 
     data      = request.get_json(force=True, silent=True) or {}
@@ -2721,7 +2744,6 @@ def drain_player_input():
     return jsonify(drained), 200
 
 
-@app.route("/stream")
 def _initial_payloads(emit) -> None:
     """Push the on-connect snapshot (scene, replay, stats, pending rolls, …).
 
@@ -2804,6 +2826,7 @@ def _initial_payloads(emit) -> None:
 
 
 
+@app.route("/stream")
 def stream():
     q: queue.Queue = queue.Queue(maxsize=256)
     with _clients_lock:
