@@ -29,6 +29,7 @@ import secrets
 import subprocess
 import sys
 import threading
+import unicodedata
 from collections import deque
 from typing import Optional
 from flask import Flask, Response, request, render_template, jsonify, send_from_directory
@@ -843,6 +844,23 @@ def _detect_scene(text: str) -> Optional[dict]:
 
 _clients: list[queue.Queue] = []
 _clients_lock = threading.Lock()
+
+# ─── Broadcast journal (polling fallback) ────────────────────────────────────
+# Some proxies buffer a long-lived response instead of streaming it — a
+# Cloudflare quick tunnel does exactly this, so /stream stays open and silent
+# while ordinary requests pass fine. Every broadcast is therefore also recorded
+# here with a sequence number, and a browser that never receives an SSE event
+# falls back to polling /tail?since=<seq> for the same payloads.
+_broadcast_journal: "deque[tuple[int, dict]]" = deque(maxlen=500)
+_broadcast_seq = 0
+_journal_lock = threading.Lock()
+
+
+def _record_broadcast(payload: dict) -> None:
+    global _broadcast_seq
+    with _journal_lock:
+        _broadcast_seq += 1
+        _broadcast_journal.append((_broadcast_seq, payload))
 # Maps a connected SSE client (queue) → the character it's bound to, if any.
 # Phones connect to /stream?character=<name>; the main display has no character.
 # Lets a dice-request know whether a target PC has a live phone (→ route there)
@@ -850,13 +868,31 @@ _clients_lock = threading.Lock()
 _client_chars: "dict[queue.Queue, str]" = {}
 
 
+# Polling clients hold no SSE connection, so presence is tracked by the
+# timestamp of their last /tail poll instead. Two poll intervals of slack.
+_polling_chars: dict[str, float] = {}
+_polling_lock = threading.Lock()
+POLLING_PRESENCE_TTL = 6.0
+
+
+def _note_polling_char(char: str) -> None:
+    c = (char or "").strip().lower()[:48]
+    if not c:
+        return
+    with _polling_lock:
+        _polling_chars[c] = _time.time()
+
+
 def _phone_present(char: str) -> bool:
-    """True if some connected phone is bound to this character (case-insensitive)."""
+    """True if a phone bound to this character is connected — by SSE or polling."""
     c = (char or "").strip().lower()
     if not c:
         return False
     with _clients_lock:
-        return c in _client_chars.values()
+        if c in _client_chars.values():
+            return True
+    with _polling_lock:
+        return (_time.time() - _polling_chars.get(c, 0.0)) < POLLING_PRESENCE_TTL
 
 # ─── Text replay log ──────────────────────────────────────────────────────────
 # Stores cleaned text chunks so late-connecting browsers can catch up.
@@ -1111,6 +1147,7 @@ _load_input_queue()
 
 
 def _broadcast(payload: dict) -> None:
+    _record_broadcast(payload)
     with _clients_lock:
         dead = []
         for q in _clients:
@@ -1188,6 +1225,90 @@ def srd_lookup():
                     "wikidot_url": wurl, "suggestions": suggestions})
 
 
+@app.route("/snapshot")
+def snapshot():
+    """On-connect state for a polling client — the SSE stream's opening burst.
+
+    A browser whose stream is being buffered by a proxy never receives those
+    payloads, so it would render an empty sidebar, an input panel with no
+    character tabs, and miss any dice request already in flight.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    events: list[dict] = []
+    _initial_payloads(events.append)
+    with _journal_lock:
+        current = _broadcast_seq
+    return jsonify({"seq": current, "events": events})
+
+
+@app.route("/tail")
+def tail_since():
+    """Polling fallback for clients whose SSE stream is being buffered.
+
+    Returns every broadcast payload newer than ?since=<seq>, plus the current
+    sequence number to pass back next time. `since=0` (a fresh poller) returns
+    only the current sequence so the client starts from now and does not replay
+    the whole journal on top of the snapshot it already rendered.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    try:
+        since = int(request.args.get("since", "0"))
+    except ValueError:
+        since = 0
+    _note_polling_char(request.args.get("character") or request.args.get("char") or "")
+    with _journal_lock:
+        current = _broadcast_seq
+        # The client's baseline always comes from /snapshot, so a plain
+        # "everything after N" filter is right even at N=0 (a fresh server,
+        # where dropping n=1 would silently lose the first event).
+        events = [p for (n, p) in _broadcast_journal if n > since]
+    return jsonify({"seq": current, "events": events})
+
+
+@app.route("/tts-sample")
+def tts_sample_index():
+    """TEMP: side-by-side audition of the local/free TTS candidates."""
+    rows = "".join(
+        f'<section><h2>{title}</h2><p>{note}</p>'
+        f'<audio controls preload="none" src="/tts-sample/{key}"></audio></section>'
+        for key, title, note in [
+            ("piper", "Piper · tr_TR-dfki-medium",
+             "Tamamen çevrimdışı · 2.2 sn · kotasız, internetsiz"),
+            ("ahmet", "Edge · tr-TR-AhmetNeural (erkek)",
+             "Sinir ağı · 2.7 sn · anahtarsız, kotasız, internet gerekir"),
+            ("emel", "Edge · tr-TR-EmelNeural (kadın)",
+             "Sinir ağı · 4.1 sn · anahtarsız, kotasız, internet gerekir"),
+        ])
+    return Response(
+        "<!doctype html><meta charset=utf-8><title>TTS karşılaştırma</title>"
+        "<style>body{background:#14100c;color:#e8dcc8;font:16px/1.6 system-ui;"
+        "max-width:680px;margin:0 auto;padding:32px 20px}h1{font-size:20px}"
+        "section{border:1px solid #3a3128;border-radius:4px;padding:16px;margin:16px 0}"
+        "h2{font-size:15px;margin:0 0 4px}p{margin:0 0 12px;color:#9a8d79;font-size:13px}"
+        "audio{width:100%}blockquote{color:#9a8d79;font-size:14px;border-left:2px solid #3a3128;"
+        "padding-left:12px;margin:0 0 24px}</style>"
+        "<h1>Sesli anlatım — aynı metin, üç ses</h1>"
+        "<blockquote>Ayıboğan çocuğa yaklaşmıyor. Yaklaşmak bir çocuğu kapatır. "
+        "Bunun yerine havayı okuyor. Tepe ıslak, sırılsıklam…</blockquote>" + rows,
+        mimetype="text/html; charset=utf-8")
+
+
+@app.route("/tts-sample/<name>")
+def tts_sample_file(name):
+    files = {"piper": ("/tmp/piper_sample.wav", "audio/wav"),
+             "ahmet": ("/tmp/edge_ahmet.mp3", "audio/mpeg"),
+             "emel":  ("/tmp/edge_emel.mp3",  "audio/mpeg")}
+    if name not in files:
+        return "unknown sample", 404
+    path, mime = files[name]
+    if not os.path.isfile(path):
+        return "no sample", 404
+    with open(path, "rb") as f:
+        return Response(f.read(), mimetype=mime, headers={"Cache-Control": "no-store"})
+
+
 @app.route("/ping")
 def ping():
     return "ok", 200
@@ -1239,6 +1360,35 @@ def chunk():
     if not _token_ok():
         return "Forbidden", 403
     data = request.get_json(silent=True) or {}
+
+    # ── Scene image ───────────────────────────────────────────────────────────
+    # Carries a URL only; the browser fetches the picture directly, so nothing
+    # is downloaded or cached here. Handled before the text gate because an
+    # image block legitimately has no body text.
+    scene_image = str(data.get("scene_image") or "").strip()
+    if scene_image:
+        if not scene_image.startswith(("http://", "https://")):
+            return "bad scene_image url", 400
+        img_payload: dict = {"scene_image": scene_image[:2000]}
+        prompt = str(data.get("prompt") or "").strip()[:300]
+        if prompt:
+            img_payload["prompt"] = prompt
+        img_log: dict = dict(img_payload)
+        try:
+            _camp_stamp = open(CAMP_FILE, encoding="utf-8").read().strip()
+            if _camp_stamp:
+                img_log["_camp"] = _camp_stamp
+        except Exception:
+            pass
+        with _text_log_lock:
+            _text_log.append(img_log)
+        with _tail_lock:
+            _tail_buffer.append(img_log)
+        _persist_log()
+        _persist_tail()
+        _broadcast(img_payload)
+        return "", 204
+
     raw = data.get("text", "")
     if not raw:
         return "", 204
@@ -2247,6 +2397,41 @@ def dice_request_cancel(request_id):
     return "", 204
 
 
+def _fold_name(name: str) -> str:
+    """Fold a character name to a comparable ASCII key.
+
+    Sheet files are saved slugged and lowercase (`ayibogan.md`) while the display
+    addresses characters by their real name (`Ayıboğan`). A plain ASCII allowlist
+    turns "Ayıboğan" into "Ayboan" and matches nothing, so map the letters that
+    carry diacritics to their base form first — Turkish included, where ı and İ
+    do not fold the way str.lower() assumes.
+    """
+    table = str.maketrans({
+        "ı": "i", "İ": "i", "ğ": "g", "Ğ": "g", "ş": "s", "Ş": "s",
+        "ö": "o", "Ö": "o", "ü": "u", "Ü": "u", "ç": "c", "Ç": "c",
+    })
+    folded = unicodedata.normalize("NFKD", name.translate(table))
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]", "", folded.lower())
+
+
+def _resolve_sheet_path(dirpath: str, character: str) -> "str | None":
+    """Find the sheet file for `character` in `dirpath`, ignoring case and accents.
+
+    Matching against an actual directory listing (rather than building a path
+    from user input) also keeps the traversal guarantee the caller relies on.
+    """
+    want = _fold_name(character)
+    if not want or not os.path.isdir(dirpath):
+        return None
+    for entry in sorted(os.listdir(dirpath)):
+        if not entry.endswith(".md"):
+            continue
+        if _fold_name(entry[:-3]) == want:
+            return os.path.join(dirpath, entry)
+    return None
+
+
 @app.route("/character/<character>", methods=["GET"])
 def get_character_sheet(character):
     """Return the markdown content of a PC sheet for the active campaign.
@@ -2265,8 +2450,8 @@ def get_character_sheet(character):
     if not _token_ok():
         return "Forbidden", 403
 
-    safe = re.sub(r"[^A-Za-z0-9 _-]", "", character).strip()[:50]
-    if not safe:
+    safe = character.strip()[:60]
+    if not _fold_name(safe):
         return "Bad character name", 400
 
     try:
@@ -2280,10 +2465,12 @@ def get_character_sheet(character):
     camp = re.sub(r"[^A-Za-z0-9_-]", "", camp)[:50]
 
     root = os.environ.get("DND_CAMPAIGN_ROOT", os.path.expanduser("~/.claude/dnd"))
-    candidates = []
+    search_dirs = []
     if camp:
-        candidates.append(os.path.join(root, "campaigns", camp, "characters", f"{safe}.md"))
-    candidates.append(os.path.expanduser(f"~/.claude/dnd/characters/{safe}.md"))
+        search_dirs.append(os.path.join(root, "campaigns", camp, "characters"))
+    search_dirs.append(os.path.expanduser("~/.claude/dnd/characters"))
+
+    candidates = [p for p in (_resolve_sheet_path(d, safe) for d in search_dirs) if p]
 
     for path in candidates:
         if os.path.isfile(path):
@@ -2334,7 +2521,7 @@ def stage_input():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr):
+    if not _rate_ok(request.remote_addr or "?"):
         return "Too Many Requests", 429
 
     device_id = request.headers.get("X-DND-Device", "")
@@ -2384,7 +2571,7 @@ def ready_input():
     """
     if not _token_ok():
         return "Forbidden", 403
-    if not _rate_ok(request.remote_addr):
+    if not _rate_ok(request.remote_addr or "?"):
         return "Too Many Requests", 429
 
     device_id = request.headers.get("X-DND-Device", "")
@@ -2535,20 +2722,18 @@ def drain_player_input():
 
 
 @app.route("/stream")
-def stream():
-    q: queue.Queue = queue.Queue(maxsize=256)
-    with _clients_lock:
-        _clients.append(q)
-        # Register this client's bound character (phones pass ?character=/?char=);
-        # the main display passes neither. Drives dice-request phone-vs-screen routing.
-        _ch = (request.args.get("character") or request.args.get("char") or "").strip().lower()[:48]
-        if _ch:
-            _client_chars[q] = _ch
+def _initial_payloads(emit) -> None:
+    """Push the on-connect snapshot (scene, replay, stats, pending rolls, …).
 
+    Shared by the SSE stream and the /snapshot polling fallback: a client that
+    cannot receive the stream would otherwise start with an empty sidebar, no
+    character list on the input panel, and no pending dice request.
+    """
+    _emit = emit
     # Send the current scene immediately on connect so the browser
     # starts with the right background even mid-session.
     initial_scene = SCENES[_current_scene_name] | {"name": _current_scene_name}
-    q.put_nowait({"scene": initial_scene})
+    _emit({"scene": initial_scene})
 
     # Replay recent entries so late-connecting / reconnecting browsers catch up.
     # _text_log is the durable session record (maxlen=2000); replay only the
@@ -2557,32 +2742,32 @@ def stream():
     with _text_log_lock:
         recent = list(_text_log)[-200:]
     if recent:
-        q.put_nowait({"replay_batch": recent})
+        _emit({"replay_batch": recent})
 
     # Send current stats so the sidebar is populated immediately on (re)connect.
     with _stats_lock:
         if _current_stats:
-            q.put_nowait({"stats": dict(_current_stats)})
+            _emit({"stats": dict(_current_stats)})
 
     # Send current input queue so the pending indicator is accurate on reconnect.
     with _input_lock:
         if _input_queue:
-            q.put_nowait({"pending_input": list(_input_queue)})
+            _emit({"pending_input": list(_input_queue)})
 
     # Send current staged inputs so the panel reflects live state on reconnect.
     with _staged_lock:
         if _staged:
-            q.put_nowait({"staged_inputs": _staged_snapshot()})
+            _emit({"staged_inputs": _staged_snapshot()})
 
     # Send current queue status so the 'Queued' indicator survives page reload.
     with _queue_status_lock:
         if _queue_status:
-            q.put_nowait({"queue_status": list(_queue_status)})
+            _emit({"queue_status": list(_queue_status)})
 
     # Send current pending dice requests so the "Waiting on…" badge survives reload.
     snap = _dice_pending_snapshot()
     if snap:
-        q.put_nowait({"dice_pending": snap})
+        _emit({"dice_pending": snap})
 
     # Replay every active dice_request so phones that connected *after* a DM
     # broadcast still pre-fill their pad and store the request_id. Without this,
@@ -2591,7 +2776,7 @@ def stream():
     with _dice_pending_lock:
         active = [(rid, dict(e["meta"]), sorted(e["chars"])) for rid, e in _dice_pending.items() if e["chars"]]
     for rid, meta, chars in active:
-        q.put_nowait({"dice_request": {
+        _emit({"dice_request": {
             "request_id": rid,
             "characters": chars,
             "character": chars[0] if len(chars) == 1 else "any",
@@ -2606,19 +2791,41 @@ def stream():
     # Replay autorun cycle so reconnecting clients resume the countdown from correct elapsed position.
     with _autorun_cycle_lock:
         if _autorun_cycle:
-            q.put_nowait({"autorun_cycle": dict(_autorun_cycle)})
+            _emit({"autorun_cycle": dict(_autorun_cycle)})
 
     # Replay threshold so the ready counter reflects the correct target on reconnect.
     if _autorun_threshold is not None:
-        q.put_nowait({"autorun_threshold": _autorun_threshold})
+        _emit({"autorun_threshold": _autorun_threshold})
 
     # Send any pending device approval requests so the DM sees them on reconnect.
     with _devices_lock:
         for dev in list(_pending_devices.values()):
-            q.put_nowait({"device_request": {"id": dev["id"], "ip": dev["ip"]}})
+            _emit({"device_request": {"id": dev["id"], "ip": dev["ip"]}})
+
+
+
+def stream():
+    q: queue.Queue = queue.Queue(maxsize=256)
+    with _clients_lock:
+        _clients.append(q)
+        # Register this client's bound character (phones pass ?character=/?char=);
+        # the main display passes neither. Drives dice-request phone-vs-screen routing.
+        _ch = (request.args.get("character") or request.args.get("char") or "").strip().lower()[:48]
+        if _ch:
+            _client_chars[q] = _ch
+
+    _initial_payloads(q.put_nowait)
 
     def generate():
         try:
+            # Prime the stream. A CDN (Cloudflare Tunnel) will hold a response
+            # in its compression buffer until enough bytes arrive, which stalls
+            # an idle SSE connection forever; 2 KB of comment padding pushes the
+            # headers and the first flush through immediately.
+            yield ":" + (" " * 2048) + "\n\n"
+            # A real event (not a comment) so the browser can tell a live
+            # stream from one a proxy is holding open but buffering.
+            yield "data: " + json.dumps({"sse_alive": True}) + "\n\n"
             while True:
                 try:
                     payload = q.get(timeout=5)
@@ -2637,15 +2844,19 @@ def stream():
         generate(),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            # no-transform stops Cloudflare compressing (and therefore buffering)
+            # the stream; X-Accel-Buffering covers nginx, which Cloudflare strips.
+            "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
-            "Transfer-Encoding": "chunked",
         },
     )
-    # Force a single authoritative Connection header — Werkzeug otherwise
-    # emits both keep-alive (ours) and close (its default), which confuses
-    # transparent proxies (e.g. eero mesh routing) into buffering the stream.
-    resp.headers["Connection"] = "keep-alive"
+    # Transfer-Encoding and Connection are hop-by-hop: the WSGI server owns them.
+    # Setting them by hand made Cloudflare Tunnel reject /stream with a 502, so
+    # they are only forced when the stream is served straight onto the LAN —
+    # which is where the original problem lived (eero mesh buffering the stream
+    # because Werkzeug emitted both keep-alive and close).
+    if _LAN_MODE:
+        resp.headers["Connection"] = "keep-alive"
     return resp
 
 

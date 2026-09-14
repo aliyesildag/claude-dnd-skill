@@ -21,6 +21,12 @@ Usage:
     "I've been waiting for you."
     DNDEND
 
+    # Scene image — picture above the narration it frames.
+    # The PROMPT is always ENGLISH, even when the table plays in another language.
+    python3 send.py --image "ancient burial mound chamber, carved stone lid, salt line, torchlight" << 'DNDEND'
+    Kapak odası soğuk. Tuz çizgisi hâlâ yerinde.
+    DNDEND
+
     # Tutor/learning mode hint — collapsible parchment block on display
     python3 send.py --tutor << 'DNDEND'
     You could try a Perception check (WIS) to scan the room before acting.
@@ -62,6 +68,8 @@ import os
 import ssl
 import time
 import urllib.request
+import urllib.parse
+import zlib
 
 # Windows CJK fix: Python decodes stdin via the system codepage (GBK), but
 # heredocs/pipes deliver UTF-8 bytes — force UTF-8 to keep Chinese narration intact.
@@ -82,6 +90,18 @@ STATS_URL   = f"{BASE_URL}/stats"
 HEALTH_URL  = f"{BASE_URL}/health"
 DICE_REQ_URL = f"{BASE_URL}/dice-request"
 TOKEN_FILE  = rt(".token")
+
+# ── Scene image (Pollinations) ────────────────────────────────────────────────
+# The URL is handed to the browser, which fetches it directly — nothing is
+# downloaded or cached server-side, so the display adds no disk footprint.
+IMAGE_BASE  = "https://image.pollinations.ai/prompt/"
+IMAGE_W     = 1024
+IMAGE_H     = 576
+# Appended to every scene prompt so the campaign keeps one visual identity.
+# Override per-campaign with --image-style.
+IMAGE_STYLE = ("grim folkloric dark fantasy, oil painting, muted earth tones, "
+               "torchlight, atmospheric, no text, no letters")
+
 TIMEOUT     = 8.0
 RETRIES     = 1                # one retry on timeout/connection error
 CHUNK_LIMIT = 3500             # paragraph-split text bodies above this many chars
@@ -246,6 +266,24 @@ def _split_paragraphs(text: str, limit: int = CHUNK_LIMIT) -> list:
     return chunks
 
 
+def _build_image_url(prompt: str, style: str, seed: "int | None") -> str:
+    """Build a Pollinations image URL from an English scene prompt.
+
+    The seed is derived from the prompt when not given, so re-sending the same
+    scene returns the same picture instead of a fresh variation.
+    """
+    full = f"{prompt.strip()}, {style.strip()}" if style.strip() else prompt.strip()
+    if seed is None:
+        seed = zlib.crc32(full.encode("utf-8")) & 0x7FFFFFFF
+    query = urllib.parse.urlencode({
+        "width": IMAGE_W,
+        "height": IMAGE_H,
+        "seed": seed,
+        "nologo": "true",
+    })
+    return f"{IMAGE_BASE}{urllib.parse.quote(full, safe='')}?{query}"
+
+
 def _build_stats_payload(args) -> "dict | None":
     """Build a push_stats-compatible payload from --stat-* flags."""
     players: "dict[str, dict]" = {}
@@ -394,6 +432,18 @@ def main() -> None:
         "--action", metavar="NAME",
         help="Send as a player action intent — subdued label echoing what the player declared",
     )
+
+    # ── Scene image ──────────────────────────────────────────────────────────
+    parser.add_argument("--image", metavar="PROMPT",
+        help="Show a generated scene image above the narration. PROMPT must be "
+             "ENGLISH regardless of the table's language — the model produces "
+             "mush from non-English prompts.")
+    parser.add_argument("--image-seed", type=int, metavar="N",
+        help="Pin the image seed. Default: derived from the prompt, so the same "
+             "scene always yields the same picture.")
+    parser.add_argument("--image-style", metavar="TEXT", default=IMAGE_STYLE,
+        help="Style suffix appended to the prompt (default: the campaign's grim "
+             "folkloric look). Pass an empty string to disable.")
 
     # ── Inspiration / XP award flags ─────────────────────────────────────────
     parser.add_argument("--inspiration-award", metavar="NAME",
@@ -637,6 +687,16 @@ def main() -> None:
         print(f"send.py: ABORT — {flag} requires a text body but stdin was empty.",
               file=sys.stderr)
         sys.exit(2)
+
+    # ── Scene image send ──────────────────────────────────────────────────────
+    # Posted before the text so the picture lands above the narration it frames.
+    # Only the URL travels; the browser fetches the image itself.
+    if args.image and args.image.strip():
+        image_url = _build_image_url(args.image, args.image_style, args.image_seed)
+        _post(FLASK_URL, json.dumps({
+            "scene_image": image_url,
+            "prompt": args.image.strip(),
+        }).encode("utf-8"), token)
 
     # ── Text send ─────────────────────────────────────────────────────────────
     chunks_sent = 0

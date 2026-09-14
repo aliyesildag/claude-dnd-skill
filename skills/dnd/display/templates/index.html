@@ -400,6 +400,60 @@
   }
 
   /* ── Tutor / learning mode hint blocks ── */
+  /* ── Scene image ──
+     Fixed 16:9 box so the feed never jumps while the picture loads. The frame
+     is 7% shorter than the image and the image is bottom-anchored, which crops
+     the generator's bottom-right watermark off the visible area. */
+  .scene-image-block {
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    margin: 22px auto 26px;
+    aspect-ratio: 1024 / 536;
+    overflow: hidden;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow: 0 6px 26px rgba(0, 0, 0, 0.55);
+    animation: sceneImageIn 900ms ease-out both;
+  }
+  @keyframes sceneImageIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .scene-image-block img {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 107.5%;      /* overflow the bottom → watermark falls outside */
+    object-fit: cover;
+    object-position: center top;
+    opacity: 0;
+    transition: opacity 700ms ease-out;
+  }
+  .scene-image-block img.loaded { opacity: 1; }
+  /* Vignette so the picture sits in the dark feed instead of floating on it */
+  .scene-image-block::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow: inset 0 0 60px 12px rgba(0, 0, 0, 0.55);
+  }
+  .scene-image-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(200, 180, 140, 0.42);
+  }
+  @media (max-width: 700px) {
+    .scene-image-block { margin: 14px auto 18px; }
+  }
+
   .tutor-block {
     margin-bottom: 2em;
     opacity: 0;
@@ -1936,6 +1990,35 @@
     margin-right: 8px;
   }
 
+  /* ── Player seat (?char=…&view=full) panel sizing ──
+     A phone gives the panel the whole screen, so its sections can be any
+     height. A seat shares the window with the scene, so the panel has to be
+     bounded: tabs stay pinned, the active section scrolls inside what's left.
+     Without this the character sheet (a few thousand px of markdown) runs off
+     the bottom of the window, taking the tab bar with it — no scroll, no way
+     back to Move. */
+  body.player-seat #input-panel {
+    max-height: min(70vh, 720px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  body.player-seat #input-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  body.player-seat #dp-tabs { flex: 0 0 auto; }
+  body.player-seat #character-pane,
+  body.player-seat #dice-pad {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* ── Input-only view (mobile players): http://...:5001/?view=input ── */
   body.input-only #text-scroll,
   body.input-only #sidebar,
@@ -1996,14 +2079,14 @@
 
   /* Tab bar — only shown in input-only mode, hidden on the TV view. */
   #dp-tabs { display: none; }
-  body.input-only #dp-tabs {
+  body:is(.input-only, .player-seat) #dp-tabs {
     display: flex !important;
     flex: 0 0 auto;
     gap: 0;
     border-bottom: 1px solid rgba(180,140,60,0.25);
     background: rgba(0,0,0,0.4);
   }
-  body.input-only .dp-tab {
+  body:is(.input-only, .player-seat) .dp-tab {
     flex: 1 1 0;
     background: transparent;
     color: #b8a26a;
@@ -2019,27 +2102,27 @@
     touch-action: manipulation;
     transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
   }
-  body.input-only .dp-tab.active {
+  body:is(.input-only, .player-seat) .dp-tab.active {
     color: #f4e2a8;
     border-bottom-color: rgba(220,180,90,0.85);
     background: rgba(180,140,60,0.08);
   }
-  body.input-only .dp-tab:active { background: rgba(180,140,60,0.18); }
+  body:is(.input-only, .player-seat) .dp-tab:active { background: rgba(180,140,60,0.18); }
 
   /* Section visibility: only the section whose data-tab-section matches
      #input-body[data-active-tab] is shown. Every other tagged section is
      hidden. Untagged children stay visible (none currently). */
-  body.input-only #input-body[data-active-tab="move"]      [data-tab-section="roll"],
-  body.input-only #input-body[data-active-tab="move"]      [data-tab-section="character"],
-  body.input-only #input-body[data-active-tab="roll"]      [data-tab-section="move"],
-  body.input-only #input-body[data-active-tab="roll"]      [data-tab-section="character"],
-  body.input-only #input-body[data-active-tab="character"] [data-tab-section="move"],
-  body.input-only #input-body[data-active-tab="character"] [data-tab-section="roll"] {
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="move"]      [data-tab-section="roll"],
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="move"]      [data-tab-section="character"],
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="roll"]      [data-tab-section="move"],
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="roll"]      [data-tab-section="character"],
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="character"] [data-tab-section="move"],
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="character"] [data-tab-section="roll"] {
     display: none !important;
   }
 
   /* Move tab: let the action textarea actually use the screen. */
-  body.input-only #input-body[data-active-tab="move"] #player-input-text {
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="move"] #player-input-text {
     flex: 1 1 auto;
     min-height: 160px;
     font-size: 16px !important;
@@ -2047,17 +2130,17 @@
     margin: 10px 12px;
     border-radius: 10px;
   }
-  body.input-only #input-body[data-active-tab="move"] #input-footer {
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="move"] #input-footer {
     padding: 0 12px 12px;
   }
-  body.input-only #input-body[data-active-tab="move"] #stage-btn {
+  body:is(.input-only, .player-seat) #input-body[data-active-tab="move"] #stage-btn {
     min-height: 48px;
     padding: 14px 18px;
     font-size: 16px;
   }
   /* Character pane — phone-side read-only sheet viewer. */
   #character-pane { display: none; }
-  body.input-only #character-pane {
+  body:is(.input-only, .player-seat) #character-pane {
     display: flex !important;
     flex-direction: column;
     flex: 1 1 auto;
@@ -2136,7 +2219,7 @@
   body.input-only #cp-body tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
 
   /* Notification dot on the Roll tab when an unresolved DM request targets us. */
-  body.input-only .dp-tab.has-request::after {
+  body:is(.input-only, .player-seat) .dp-tab.has-request::after {
     content: '';
     display: inline-block;
     width: 8px;
@@ -2156,7 +2239,7 @@
 
   /* ── Phone dice pad (visible only in input-only view) ────────────────── */
   #dice-pad { display: none; }
-  body.input-only #dice-pad {
+  body:is(.input-only, .player-seat) #dice-pad {
     display: flex !important;
     flex-direction: column;
     gap: 10px;
@@ -3053,7 +3136,7 @@
 
   /* scene kicker */
   :root[data-skin="editorial"] #scene-indicator{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:12px; letter-spacing:.34em; color:var(--e-accent); }
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 12px; letter-spacing:.34em; color:var(--e-accent); }
 
   /* reading column */
   /* reading area fills the width between the party rail and the launcher rail; flat (no parchment card) */
@@ -3069,7 +3152,7 @@
   /* NPC dialogue — the hero pull-quote, large & legible */
   :root[data-skin="editorial"] .npc-block{ border-left:4px solid var(--e-accent); padding-left:1.1em; }
   :root[data-skin="editorial"] .npc-name{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:12px; letter-spacing:.18em; color:var(--e-accent); }
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 12px; letter-spacing:.18em; color:var(--e-accent); }
   :root[data-skin="editorial"] .npc-block p,
   :root[data-skin="editorial"] .npc-block p em{
     color:var(--e-ink); font-family:'Newsreader',serif; font-style:italic; font-weight:500;
@@ -3078,7 +3161,7 @@
   /* player action */
   :root[data-skin="editorial"] .player-block{ border-left:4px solid color-mix(in srgb, var(--e-accent) 45%, transparent); padding-left:1.1em; }
   :root[data-skin="editorial"] .player-name{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:11px; letter-spacing:.16em; color:var(--e-mut); }
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 11px; letter-spacing:.16em; color:var(--e-mut); }
   :root[data-skin="editorial"] .player-block p{ color:var(--e-ink); opacity:.85; font-family:'Newsreader',serif; text-shadow:none; }
 
   /* action intent */
@@ -3087,7 +3170,7 @@
 
   /* dice — accent banner */
   :root[data-skin="editorial"] .dice-result{
-    font-family:'Syne',sans-serif; font-weight:800; letter-spacing:.04em; font-size:13px;
+    font-family:'Syne',sans-serif; font-weight:800; letter-spacing:.04em; font-size: 13px;
     color:var(--e-dice-text); background:var(--e-accent); border:0; border-radius:0; text-shadow:none; padding:.42em 1.1em; }
 
   /* world clock */
@@ -3114,7 +3197,7 @@
     box-shadow:0 -2px 40px rgba(0,0,0,.28); }
   :root[data-skin="editorial"] #input-panel:focus-within{ border-color:var(--e-accent); }
   :root[data-skin="editorial"] #input-panel-label{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:9px; letter-spacing:.28em; color:var(--e-accent); }
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 9px; letter-spacing:.28em; color:var(--e-accent); }
   :root[data-skin="editorial"] #input-badge{
     font-family:'Syne',sans-serif; font-weight:700; color:var(--e-dice-text);
     background:var(--e-accent); border:0; }
@@ -3122,7 +3205,7 @@
 
   /* character tabs */
   :root[data-skin="editorial"] .char-tab{
-    font-family:'Syne',sans-serif; font-weight:700; font-size:11px; letter-spacing:.1em;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 11px; letter-spacing:.1em;
     color:var(--e-on-strong); opacity:.62; background:transparent;
     border:1px solid var(--e-hair-strong); border-radius:3px; padding:10px 16px; }
   :root[data-skin="editorial"] .char-tab:hover{ opacity:1; border-color:var(--e-accent); color:var(--e-on-strong); }
@@ -3133,20 +3216,20 @@
   :root[data-skin="editorial"] #player-input-text{
     background:color-mix(in srgb, var(--e-strong), #000 22%); color:var(--e-on-strong);
     border:1px solid var(--e-hair-strong); border-radius:2px;
-    font-family:'Newsreader',serif; font-size:14px; }
+    font-family:'Newsreader',serif; font-size: 14px; }
   :root[data-skin="editorial"] #player-input-text:focus{ border-color:var(--e-accent); }
   :root[data-skin="editorial"] #player-input-text::placeholder{ color:var(--e-on-strong); opacity:.4; }
 
   /* footer buttons */
   :root[data-skin="editorial"] #stage-btn{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:13px; letter-spacing:.14em;
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 13px; letter-spacing:.14em;
     color:var(--e-dice-text); background:var(--e-accent);
     border:1px solid var(--e-accent); border-radius:3px; padding:13px 32px; }
   /* in the TV drawer give Stage real presence */
-  :root[data-skin="editorial"] body:not(.input-only) #input-panel #stage-btn{ font-size:15px; padding:16px 40px; }
+  :root[data-skin="editorial"] body:not(.input-only) #input-panel #stage-btn{ font-size: 15px; padding:16px 40px; }
   :root[data-skin="editorial"] #stage-btn:hover{ background:var(--e-accent-ink); border-color:var(--e-accent-ink); color:var(--e-dice-text); }
   :root[data-skin="editorial"] #skip-turn-btn{
-    font-family:'Syne',sans-serif; font-weight:700; font-size:9px; letter-spacing:.12em;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 9px; letter-spacing:.12em;
     color:var(--e-on-strong); opacity:.7; background:transparent;
     border:1px dashed var(--e-hair-strong); border-radius:2px; }
   :root[data-skin="editorial"] #skip-turn-btn:hover{ opacity:1; border-color:var(--e-accent); color:var(--e-accent); }
@@ -3164,7 +3247,7 @@
   :root[data-skin="editorial"] .ready-btn:hover{ opacity:1; border-color:var(--e-accent); }
 
   /* ── dice pad (phone roll surface) ── */
-  :root[data-skin="editorial"] body.input-only #dice-pad{
+  :root[data-skin="editorial"] body:is(.input-only, .player-seat) #dice-pad{
     border-top:1px solid var(--e-hair-strong); background:color-mix(in srgb, var(--e-strong), #000 10%); }
   :root[data-skin="editorial"] #dice-pad .dp-die,
   :root[data-skin="editorial"] #dice-pad .dp-adv,
@@ -3193,15 +3276,15 @@
   :root[data-skin="editorial"] #dp-result-line .total{ color:var(--e-accent); opacity:1; }
 
   /* phone tab bar = strong chrome, accent active underline */
-  :root[data-skin="editorial"] body.input-only #dp-tabs{
+  :root[data-skin="editorial"] body:is(.input-only, .player-seat) #dp-tabs{
     background:var(--e-strong); border-bottom:1px solid var(--e-hair-strong); }
-  :root[data-skin="editorial"] body.input-only .dp-tab{
+  :root[data-skin="editorial"] body:is(.input-only, .player-seat) .dp-tab{
     color:var(--e-on-strong); opacity:.6;
     font-family:'Syne',sans-serif; font-weight:800; letter-spacing:.14em;
     border-bottom:2px solid transparent; }
-  :root[data-skin="editorial"] body.input-only .dp-tab.active{
+  :root[data-skin="editorial"] body:is(.input-only, .player-seat) .dp-tab.active{
     color:var(--e-accent); opacity:1; background:transparent; border-bottom-color:var(--e-accent); }
-  :root[data-skin="editorial"] body.input-only .dp-tab:active{ background:color-mix(in srgb, var(--e-strong), #000 14%); }
+  :root[data-skin="editorial"] body:is(.input-only, .player-seat) .dp-tab:active{ background:color-mix(in srgb, var(--e-strong), #000 14%); }
 
   /* ══ Layer 3: right-edge rail + sliding drawers (editorial, TV view only) ══ */
   :root[data-skin="editorial"]{ --ed-drawer-w: min(400px, 92vw); }
@@ -3228,7 +3311,7 @@
     width:76px; min-height:64px; box-sizing:border-box; padding:9px 6px;
     background:var(--e-strong); color:var(--e-on-strong);
     border:1px solid var(--e-hair-strong); border-radius:5px;
-    font-family:'Syne',sans-serif; font-weight:700; font-size:9px; letter-spacing:.1em; text-transform:uppercase;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 9px; letter-spacing:.1em; text-transform:uppercase;
     line-height:1.2; text-align:center; cursor:pointer; box-shadow:none;
     transition:background .15s, color .15s, border-color .15s; }
   :root[data-skin="editorial"] body:not(.input-only) #ed-rail .ed-launch:hover,
@@ -3236,7 +3319,7 @@
     border-color:var(--e-accent); color:var(--e-accent); background:var(--e-strong); }
   :root[data-skin="editorial"] body:not(.input-only) #ed-rail .ed-launch.active{
     background:var(--e-accent); color:var(--e-dice-text); border-color:var(--e-accent); }
-  :root[data-skin="editorial"] body:not(.input-only) #ed-rail .ed-ic{ font-size:19px; line-height:1; }
+  :root[data-skin="editorial"] body:not(.input-only) #ed-rail .ed-ic{ font-size: 19px; line-height:1; }
   /* phone-mode = prominent, always-accent, larger tap target */
   :root[data-skin="editorial"] body:not(.input-only) #ed-rail #phone-mode-btn{
     background:var(--e-accent); color:var(--e-dice-text); border-color:var(--e-accent); min-height:78px; gap:6px; }
@@ -3264,7 +3347,7 @@
     display:flex !important; flex:1 1 auto; overflow-y:auto; padding:14px 18px 20px; }
   :root[data-skin="editorial"] body:not(.input-only) #input-panel #input-panel-header{
     padding:18px 18px 13px; border-bottom:1px solid var(--e-hair-strong); cursor:default; }
-  :root[data-skin="editorial"] body:not(.input-only) #input-panel #input-panel-label{ font-size:11px; letter-spacing:.28em; }
+  :root[data-skin="editorial"] body:not(.input-only) #input-panel #input-panel-label{ font-size: 11px; letter-spacing:.28em; }
   :root[data-skin="editorial"] body:not(.input-only) #input-panel #input-toggle-arrow{ display:none; }
 
   /* SETTINGS drawer (audio-controls) */
@@ -3289,7 +3372,7 @@
   :root[data-skin="editorial"] body:not(.input-only) #dice-drawer.ed-open{ transform:translateX(0); }
   :root[data-skin="editorial"] body:not(.input-only) #dice-drawer::before{
     content:"Dice"; display:block; padding:18px 18px 13px;
-    font-family:'Syne',sans-serif; font-weight:800; font-size:11px; letter-spacing:.28em;
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 11px; letter-spacing:.28em;
     text-transform:uppercase; color:var(--e-accent); border-bottom:1px solid var(--e-hair-strong); }
   /* Show the relocated pad inside the drawer (overrides the base #dice-pad{display:none}). */
   :root[data-skin="editorial"] body:not(.input-only) #dice-drawer #dice-pad{
@@ -3297,17 +3380,17 @@
     border-top:0; background:transparent; flex:1 1 auto; overflow-y:auto; }
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls::before{
     content:"Settings"; display:block; padding:18px 18px 13px;
-    font-family:'Syne',sans-serif; font-weight:800; font-size:11px; letter-spacing:.28em; color:var(--e-accent);
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 11px; letter-spacing:.28em; color:var(--e-accent);
     border-bottom:1px solid var(--e-hair-strong); }
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls .audio-row{
     display:flex; align-items:center; justify-content:space-between; gap:16px;
     padding:16px 18px; border-bottom:1px solid var(--e-hair-strong); cursor:pointer; }
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls .audio-label{
-    font-family:'Syne',sans-serif; font-weight:700; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--e-on-strong); opacity:.75; }
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 10px; letter-spacing:.14em; text-transform:uppercase; color:var(--e-on-strong); opacity:.75; }
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls .theme-label,
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls .speed-label,
   :root[data-skin="editorial"] body:not(.input-only) #audio-controls .narrate-label{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:11px; letter-spacing:.06em; color:var(--e-accent); text-transform:uppercase; }
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 11px; letter-spacing:.06em; color:var(--e-accent); text-transform:uppercase; }
 
   /* phone-mode character menu, repositioned beside the rail */
   :root[data-skin="editorial"] body:not(.input-only) #phone-mode-menu{
@@ -3332,7 +3415,7 @@
   :root[data-skin="editorial"] body.input-only #full-mode-btn{
     background:var(--e-strong); color:var(--e-on-strong);
     border:1px solid var(--e-hair-strong); border-left:3px solid var(--e-accent); border-radius:7px;
-    font-family:'Syne',sans-serif; font-weight:700; font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 10px; letter-spacing:.14em; text-transform:uppercase;
     opacity:1; padding:11px 16px; min-height:40px; }
 
   /* D2 — phone composer keeps comfortable padding at any font size */
@@ -3404,7 +3487,7 @@
 
   /* F — Party Input drawer composer fills the abundant vertical space */
   :root[data-skin="editorial"] body:not(.input-only) #input-panel #player-input-text{
-    min-height:240px; padding:18px; font-size:16px; line-height:1.5; }
+    min-height:240px; padding:18px; font-size: 16px; line-height:1.5; }
 
   /* SRD lookup modal themed (mirrors the sheet modal) */
   :root[data-skin="editorial"] #srd-modal{ background:rgba(0,0,0,.55); }
@@ -3431,16 +3514,16 @@
     border-top:1px solid var(--e-hair-strong); margin-top:16px; padding-top:14px; }
   :root[data-skin="editorial"] body:not(.input-only) .sb-factions-header,
   :root[data-skin="editorial"] body:not(.input-only) .sb-quests-header{
-    font-family:'Syne',sans-serif; font-weight:800; font-size:9px; letter-spacing:.24em; text-transform:uppercase;
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 9px; letter-spacing:.24em; text-transform:uppercase;
     color:var(--e-accent); opacity:1; margin-bottom:9px; }
   :root[data-skin="editorial"] body:not(.input-only) .sb-faction-item,
   :root[data-skin="editorial"] body:not(.input-only) .sb-quest-item{ padding:4px 0; }
   :root[data-skin="editorial"] body:not(.input-only) .sb-faction-name,
   :root[data-skin="editorial"] body:not(.input-only) .sb-quest-name{
-    font-family:'Newsreader',serif; font-size:13px; color:var(--e-on-strong); opacity:.82; }
+    font-family:'Newsreader',serif; font-size: 13px; color:var(--e-on-strong); opacity:.82; }
   :root[data-skin="editorial"] body:not(.input-only) .sb-faction-standing,
   :root[data-skin="editorial"] body:not(.input-only) .sb-quest-status{
-    font-family:'Syne',sans-serif; font-weight:700; font-size:8.5px; letter-spacing:.1em; }
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 8.5px; letter-spacing:.1em; }
 
   /* ══ Phone display-settings popover (#phone-settings) — both skins, phone only ══ */
   #phone-settings{ display:none; }
@@ -3449,7 +3532,7 @@
     top:calc(env(safe-area-inset-top) + 8px); right:calc(env(safe-area-inset-right) + 10px); }
   #ph-set-toggle{
     width:42px; height:42px; border-radius:9px; background:rgba(0,0,0,.5); color:#ECE4D2;
-    border:1px solid rgba(255,255,255,.2); font-size:18px; line-height:1; cursor:pointer;
+    border:1px solid rgba(255,255,255,.2); font-size: 18px; line-height:1; cursor:pointer;
     -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
   #ph-set-menu{
     display:none; position:absolute; top:50px; right:0; min-width:190px;
@@ -3459,10 +3542,10 @@
   .ph-set-opt{
     display:flex; align-items:center; justify-content:space-between; gap:18px; width:100%;
     background:none; border:0; border-bottom:1px solid rgba(255,255,255,.08);
-    color:#CFC7B5; font-family:'Syne',sans-serif; font-weight:700; font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    color:#CFC7B5; font-family:'Syne',sans-serif; font-weight:700; font-size: 11px; letter-spacing:.12em; text-transform:uppercase;
     padding:15px 16px; cursor:pointer; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
   .ph-set-opt:last-child{ border-bottom:0; }
-  .ph-set-opt strong{ color:#FF7A2D; font-weight:800; font-size:12px; }
+  .ph-set-opt strong{ color:#FF7A2D; font-weight:800; font-size: 12px; }
   .ph-set-opt:active{ background:rgba(255,255,255,.06); }
   /* Phone-side <select> chip — matches the strong-text color of the cycle
      buttons it replaces, surfaces the native iOS picker wheel on tap. */
@@ -3470,7 +3553,7 @@
   .ph-set-select{
     -webkit-appearance:none; -moz-appearance:none; appearance:none;
     background:transparent; border:0;
-    color:#FF7A2D; font-family:'Syne',sans-serif; font-weight:800; font-size:12px;
+    color:#FF7A2D; font-family:'Syne',sans-serif; font-weight:800; font-size: 12px;
     letter-spacing:.06em; text-transform:uppercase;
     padding:2px 14px 2px 4px;
     /* Caret tracks the chip's text color (`currentColor`) — orange in the
@@ -3489,14 +3572,14 @@
     align-items:center; justify-content:center; padding:24px;
     background:var(--e-canvas, #14110C); }
   #cs-card{ width:100%; max-width:440px; display:flex; flex-direction:column; gap:6px; }
-  #cs-kicker{ font-family:'Syne',sans-serif; font-weight:800; font-size:11px; letter-spacing:.3em; text-transform:uppercase; color:var(--e-accent, #FF7A2D); }
-  #cs-title{ font-family:'Newsreader',serif; font-style:italic; font-size:30px; line-height:1.1; color:var(--e-ink, #F3EFE4); margin-bottom:18px; }
+  #cs-kicker{ font-family:'Syne',sans-serif; font-weight:800; font-size: 11px; letter-spacing:.3em; text-transform:uppercase; color:var(--e-accent, #FF7A2D); }
+  #cs-title{ font-family:'Newsreader',serif; font-style:italic; font-size: 30px; line-height:1.1; color:var(--e-ink, #F3EFE4); margin-bottom:18px; }
   #cs-list{ display:flex; flex-direction:column; gap:10px; }
   .cs-opt{
     display:block; width:100%; text-align:left; cursor:pointer;
     background:var(--e-strong, #221C16); color:var(--e-on-strong, #EDE6D6);
     border:1px solid var(--e-hair-strong, rgba(237,230,214,.16)); border-radius:6px;
-    font-family:'Syne',sans-serif; font-weight:700; font-size:17px; letter-spacing:.02em;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 17px; letter-spacing:.02em;
     padding:18px 20px; -webkit-tap-highlight-color:transparent; touch-action:manipulation;
     transition:background .12s, border-color .12s; }
   .cs-opt:active{ background:var(--e-accent, #FF7A2D); color:var(--e-dice-text, #14110C); border-color:var(--e-accent, #FF7A2D); }
@@ -3504,7 +3587,7 @@
   #cs-foot{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:20px; }
   #cs-skip, #cs-back{
     background:none; border:0; cursor:pointer;
-    font-family:'Syne',sans-serif; font-weight:700; font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    font-family:'Syne',sans-serif; font-weight:700; font-size: 11px; letter-spacing:.14em; text-transform:uppercase;
     color:var(--e-mut, rgba(237,230,214,.5)); padding:10px 2px; -webkit-tap-highlight-color:transparent; }
   #cs-back{ color:var(--e-accent, #FF7A2D); }
   #cs-skip:active, #cs-back:active{ opacity:.6; }
@@ -3517,7 +3600,7 @@
     background:var(--e-strong, rgba(14,12,10,.98)); color:var(--e-on-strong, #ECE4D2);
     border:1px solid var(--e-hair-strong, rgba(255,255,255,.16)); border-left:3px solid var(--e-accent, #FF7A2D);
     border-radius:7px; box-shadow:0 14px 44px rgba(0,0,0,.5);
-    font-family:'Syne',sans-serif; font-weight:600; font-size:13px; letter-spacing:.02em;
+    font-family:'Syne',sans-serif; font-weight:600; font-size: 13px; letter-spacing:.02em;
     padding:13px 18px; opacity:0; pointer-events:none;
     transition:opacity .22s ease, transform .22s ease; }
   #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
@@ -3528,7 +3611,7 @@
     min-width:30px; min-height:26px; padding:3px 8px; cursor:pointer;
     background:transparent; color:var(--e-on-strong, rgba(200,165,80,0.95));
     border:1px solid var(--e-hair-strong, rgba(180,140,60,0.4)); border-radius:4px;
-    font-family:'Syne',sans-serif; font-weight:800; font-size:12px; line-height:1;
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 12px; line-height:1;
     -webkit-tap-highlight-color:transparent; touch-action:manipulation; transition:transform .08s ease; }
   .ts-btn:hover{ border-color:var(--e-accent, rgba(220,180,90,0.9)); color:var(--e-accent, rgba(220,185,100,1)); }
   .ts-btn:active{ transform:scale(0.92); }
@@ -3539,16 +3622,16 @@
 
   /* ══ Phone turn-status strip — tells the player exactly where the turn is ══ */
   #phone-status{ display:none; }
-  body.input-only #phone-status{
+  body:is(.input-only, .player-seat) #phone-status{
     display:block; margin:2px 0 14px; padding:15px 16px; border-radius:9px;
-    font-family:'Syne',sans-serif; font-weight:800; font-size:13.5px; letter-spacing:.04em; line-height:1.35;
+    font-family:'Syne',sans-serif; font-weight:800; font-size: 13.5px; letter-spacing:.04em; line-height:1.35;
     border:1px solid var(--e-hair-strong, rgba(255,255,255,.14));
     background:var(--e-strong, rgba(255,255,255,.05)); color:var(--e-on-strong, #ECE4D2);
     transition:background .15s, color .15s, border-color .15s; }
-  body.input-only #phone-status.ps-sent{
+  body:is(.input-only, .player-seat) #phone-status.ps-sent{
     background:var(--e-accent, #FF7A2D); color:var(--e-dice-text, #14110C); border-color:var(--e-accent, #FF7A2D); }
-  body.input-only #phone-status.ps-sending{ opacity:.8; }
-  body.input-only #phone-status.ps-resolving{ color:var(--e-accent, #FF7A2D); }
+  body:is(.input-only, .player-seat) #phone-status.ps-sending{ opacity:.8; }
+  body:is(.input-only, .player-seat) #phone-status.ps-resolving{ color:var(--e-accent, #FF7A2D); }
 </style>
 </head>
 <body>
@@ -4954,6 +5037,41 @@ function renderTutorBlock(text, isReplay) {
   _dmHelpReset();
 }
 
+// ── Scene image block ──────────────────────────────────────────────────────
+// The URL points at the generator; the browser fetches it directly so the
+// narration renders immediately and the picture fills in behind it.
+function renderSceneImage(url, prompt, isReplay) {
+  if (!/^https?:\/\//i.test(url || '')) return;
+  _flushForBlock();
+
+  const block = document.createElement('div');
+  block.className = 'scene-image-block';
+  if (isReplay) block.style.opacity = '0.65';
+
+  const status = document.createElement('div');
+  status.className = 'scene-image-status';
+  status.textContent = 'sahne çiziliyor…';
+  block.appendChild(status);
+
+  const img = document.createElement('img');
+  img.alt = prompt || 'scene';
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.addEventListener('load', () => {
+    img.classList.add('loaded');
+    status.remove();
+  });
+  img.addEventListener('error', () => {
+    status.textContent = 'görsel yüklenemedi';
+  });
+  img.src = url;
+  block.appendChild(img);
+
+  textContent.appendChild(block);
+  _reanchorCursor();
+}
+
 // ── Inspiration award block ────────────────────────────────────────────────
 function renderInspirationBlock(name, reason) {
   _flushForBlock();
@@ -5046,6 +5164,10 @@ function renderReplayBatch(items) {
     }
     if (item.xp_award) {
       renderXpBlock(item.xp_award);
+      return;
+    }
+    if (item.scene_image) {
+      renderSceneImage(item.scene_image, item.prompt || '', true);
       return;
     }
     if (!item.text) return;
@@ -5768,8 +5890,8 @@ function openSrdModal(name, category, level) {
     .then(data => {
       if (!data.found) {
         const linkHtml = data.wikidot_url
-          ? `<br><a href="${data.wikidot_url}" target="_blank" rel="noopener" style="color:#c9a84c;font-size:11px;opacity:0.85;text-decoration:none;">View on D&D 5e Wiki ↗</a>`
-          : `<br><span style="font-size:10px;opacity:0.6">May be from a supplement (Xanathar's, Tasha's, etc.)</span>`;
+          ? `<br><a href="${data.wikidot_url}" target="_blank" rel="noopener" style="color:#c9a84c;font-size: 11px;opacity:0.85;text-decoration:none;">View on D&D 5e Wiki ↗</a>`
+          : `<br><span style="font-size: 10px;opacity:0.6">May be from a supplement (Xanathar's, Tasha's, etc.)</span>`;
         // Near-miss "did you mean?" chips — tap one to re-run the lookup on the
         // closest matching name. Recovers a mistyped spell/condition/monster
         // instead of dead-ending on the not-found notice.
@@ -6703,7 +6825,20 @@ _inputPanelHdr.addEventListener('click', () => {
 
 // ── Build character tabs from stats players array ─────────────────
 function _buildCharTabs(players) {
-  const names = ['Everybody', ...(players || []).map(p => p.name).filter(Boolean)];
+  let names = ['Everybody', ...(players || []).map(p => p.name).filter(Boolean)];
+  // A client opened with ?char=<Name> speaks for that character and no one
+  // else. The full tab strip is for a single shared screen at a physical
+  // table, where one keyboard types for whoever's turn it is; when every
+  // player has their own device, showing all tabs lets anyone act as anyone.
+  const _bound = (new URLSearchParams(location.search).get('char')
+               || new URLSearchParams(location.search).get('character') || '').trim();
+  if (_bound) {
+    const match = names.find(n => n.toLowerCase() === _bound.toLowerCase());
+    if (match) {
+      names = [match];
+      _selectedChar = match;
+    }
+  }
   _charTabs.innerHTML = '';
   names.forEach(name => {
     const btn = document.createElement('button');
@@ -7279,6 +7414,74 @@ if (_controlsBtn) {
 let evtSource = null;
 let reconnectDelay = 1000;
 
+// ── Live-update transport ──
+// SSE is the fast path. Some proxies (a Cloudflare quick tunnel, for one) hold a
+// long-lived response open and buffer it, so the browser reports the stream as
+// OPEN while no event ever arrives. Detect that by waiting for a real event and,
+// if none comes, poll /tail for the same payloads instead.
+let handlePayload = () => {};
+let _sseAlive   = false;
+let _pollTimer  = null;
+let _pollSeq    = 0;
+const POLL_MS   = 2000;
+const SSE_GRACE_MS = 8000;
+
+function _markSseAlive() {
+  if (_sseAlive) return;
+  _sseAlive = true;
+  _stopPolling();
+}
+
+function _stopPolling() {
+  if (!_pollTimer) return;
+  clearInterval(_pollTimer);
+  _pollTimer = null;
+}
+
+function _pollChar() {
+  const sp = new URLSearchParams(location.search);
+  return (sp.get('char') || sp.get('character') || '').trim();
+}
+
+function _pollHeaders() {
+  return _dndToken ? { 'X-DND-Token': _dndToken } : {};
+}
+
+async function _pollFetch(path) {
+  const ch = _pollChar();
+  const url = path + (ch ? (path.includes('?') ? '&' : '?') + 'character=' + encodeURIComponent(ch) : '');
+  const r = await fetch(url, { headers: _pollHeaders(), cache: 'no-store' });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function _pollOnce() {
+  try {
+    const d = await _pollFetch('/tail?since=' + _pollSeq);
+    if (!d) return;
+    if (typeof d.seq === 'number') _pollSeq = d.seq;
+    (d.events || []).forEach(p => { if (!p.sse_alive) handlePayload(p); });
+  } catch { /* transient — the next tick retries */ }
+}
+
+async function _startPolling() {
+  if (_pollTimer || _sseAlive) return;
+  console.info('[display] SSE stalled — polling /tail every ' + POLL_MS + 'ms');
+  // The stream's opening burst (scene, replay, party stats, pending dice
+  // request) never arrived, so pull it once before the incremental polling —
+  // without it the sidebar, the character sheet and the input panel's
+  // character tabs all stay empty.
+  try {
+    const snap = await _pollFetch('/snapshot');
+    if (snap) {
+      if (typeof snap.seq === 'number') _pollSeq = snap.seq;
+      (snap.events || []).forEach(p => { if (!p.sse_alive) handlePayload(p); });
+    }
+  } catch { /* fall through — /tail will still deliver new events */ }
+  if (_sseAlive) return;
+  _pollTimer = setInterval(_pollOnce, POLL_MS);
+}
+
 function connect() {
   // Announce this client's bound character (phones only) so the server can tell
   // whether a prescribed roll's target has a live phone (→ route there) or not
@@ -7294,6 +7497,12 @@ function connect() {
   evtSource.onmessage = (e) => {
     let payload;
     try { payload = JSON.parse(e.data); } catch { return; }
+    _markSseAlive();
+    if (payload.sse_alive) return;   // liveness probe only
+    handlePayload(payload);
+  };
+
+  handlePayload = function(payload) {
 
     if (payload.dice_request && typeof window._onDiceRequest === 'function') {
       window._onDiceRequest(payload.dice_request);
@@ -7396,6 +7605,9 @@ function connect() {
     if (payload.sfx) {
       _playSfx(payload.sfx);
     }
+    if (payload.scene_image) {
+      renderSceneImage(payload.scene_image, payload.prompt || '');
+    }
     if (payload.inspiration_award) {
       renderInspirationBlock(payload.inspiration_award, payload.reason || '');
     }
@@ -7433,6 +7645,8 @@ function connect() {
 }
 
 connect();
+// If no SSE event lands within the grace window, the stream is being buffered.
+setTimeout(() => { if (!_sseAlive) _startPolling(); }, SSE_GRACE_MS);
 
 // ── Input-only mode for mobile players ───────────────────────────────────
 // Triggered by either:
@@ -7444,7 +7658,13 @@ connect();
 // from ?character= or ?char= inside _initDicePad / _loadCharacterSheet).
 {
   const _qp = new URLSearchParams(location.search);
-  const _inputMode = _qp.get('view') === 'input' || _qp.has('char') || _qp.has('character');
+  // ?char=<Name>            → input-only (a phone: one player, small screen)
+  // ?char=<Name>&view=full   → full scene AND bound to that character, for a
+  //                            table played on laptops where each player wants
+  //                            the narration, the sidebar and their own input.
+  const _fullView  = _qp.get('view') === 'full';
+  const _inputMode = _qp.get('view') === 'input'
+                     || ((_qp.has('char') || _qp.has('character')) && !_fullView);
   if (_inputMode) {
     document.body.classList.add('input-only');
     const ip = document.getElementById('input-panel');
@@ -7458,9 +7678,23 @@ connect();
     // Main / TV view — host the same phone dice pad in the slide-out "Dice" drawer.
     // Relocate the real #dice-pad node into the drawer, then init it so the roller
     // (reel, adv, modifier, prescribed-roll prefill) is identical to the phone.
+    // A seat: full scene, but this browser belongs to one player. Wire the
+    // panel exactly as a phone does — own tab, own dice pad in the panel —
+    // instead of relocating the pad into the shared screen's Dice drawer,
+    // where a player would never think to look for it.
+    const _seat = _fullView && (_qp.has('char') || _qp.has('character'));
+    if (_seat) {
+      document.body.classList.add('player-seat');
+      const ip = document.getElementById('input-panel');
+      if (ip) ip.classList.remove('collapsed');
+      _initInputTabs();
+      _initDicePad();
+      _refreshPhoneStatus();
+      _setActiveTab('move');
+    }
     const _dd = document.getElementById('dice-drawer');
     const _pad = document.getElementById('dice-pad');
-    if (_dd && _pad) {
+    if (!_seat && _dd && _pad) {
       _dd.appendChild(_pad);
       _initDicePad();   // binds handlers + sets window._onDiceRequest = _applyDiceRequest
       // Auto-slide the drawer open when the DM prescribes a roll (when enabled).
