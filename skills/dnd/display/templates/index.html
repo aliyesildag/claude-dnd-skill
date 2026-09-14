@@ -6835,6 +6835,9 @@ const _stagedQueueEl   = document.getElementById('staged-queue');
 const _waitingEl       = document.getElementById('waiting-indicator');
 
 let _selectedChar     = 'Everybody';
+// Party size from the last stats push; see _buildCharTabs.
+let _knownPlayerCount = 1;
+let _knownPlayerNames = [];
 let _stagedData       = {};   // {char: {text, ready, timestamp}} — mirror of server state
 let _autorunThreshold = null; // null = use player count; int = explicit threshold
 
@@ -6847,6 +6850,15 @@ _inputPanelHdr.addEventListener('click', () => {
 // ── Build character tabs from stats players array ─────────────────
 function _buildCharTabs(players) {
   let names = ['Everybody', ...(players || []).map(p => p.name).filter(Boolean)];
+  // The real party size, kept before the ?char= filter trims the strip down.
+  // The waiting indicator needs it: counting rendered tabs would tell a bound
+  // player the threshold is 1 when the server is actually holding for 3.
+  _knownPlayerCount = Math.max(1, names.length - 1);
+  _knownPlayerNames = names.filter(n => n !== 'Everybody');
+  // The roster and the staged list arrive as separate events, in either
+  // order. When stats land second, the waiting indicator has already been
+  // computed against an empty roster and would stay hidden; recompute it.
+  if (typeof _stagedData !== 'undefined' && _stagedData) _renderStagedQueue(_stagedData);
   // A client opened with ?char=<Name> speaks for that character and no one
   // else. The full tab strip is for a single shared screen at a physical
   // table, where one keyboard types for whoever's turn it is; when every
@@ -6856,7 +6868,12 @@ function _buildCharTabs(players) {
   if (_bound) {
     const match = names.find(n => n.toLowerCase() === _bound.toLowerCase());
     if (match) {
-      names = [match];
+      // Their own character first and selected, plus Everybody. A remote table
+      // has no shared keyboard, so without this tab a party-wide decision
+      // ("we all back out of the corridor") has to be typed three times — and
+      // nobody has the escape hatch when a player drops and the ready
+      // threshold can't be met.
+      names = [match, 'Everybody'];
       _selectedChar = match;
     }
   }
@@ -6876,6 +6893,10 @@ function _buildCharTabs(players) {
     });
     _charTabs.appendChild(btn);
   });
+  // The click handler above is the only thing that ever showed Skip Turn, so
+  // a ?char= player — whose tab is pre-selected and never clicked — never saw
+  // it. Sync it to whatever is selected once the strip is built.
+  _skipTurnBtn.style.display = _selectedChar === 'Everybody' ? 'none' : '';
 }
 
 // ── Render staged queue ───────────────────────────────────────────
@@ -6980,16 +7001,23 @@ function _renderStagedQueue(data) {
   const notReady   = entries.filter(([, v]) => !v.ready).map(([c]) => c);
   const anyReady   = readyCount > 0;
   // Derive display threshold: explicit override, or infer from total known players
-  const knownCount = (_charTabs ? _charTabs.querySelectorAll('.char-tab').length - 1 : 1); // excl. Everybody
-  const threshold  = _autorunThreshold !== null ? _autorunThreshold : Math.max(1, knownCount);
+  const threshold  = _autorunThreshold !== null ? _autorunThreshold : _knownPlayerCount;
   const needMore   = readyCount < threshold && !entries.some(([c, v]) => c === 'Everybody' && v.ready);
 
-  if (anyReady && notReady.length > 0) {
+  // Staging marks a player ready in the same action, so notReady is almost
+  // always empty — gating the indicator on it hid the count exactly when it
+  // matters. Remote players have no shared table to read the room from: if
+  // one of three is ready, the other two need to see that it is them the turn
+  // is waiting on. Show anyone staged-but-not-ready, plus anyone who has not
+  // staged at all.
+  const missing = _knownPlayerNames.filter(n => !(n in (_stagedData || {})));
+  const outstanding = [...notReady, ...missing];
+  if (anyReady && (outstanding.length > 0 || needMore)) {
     _waitingEl.style.display = 'flex';
     const label = needMore
       ? `${readyCount}/${threshold} ready`
       : `Queued \u2014 fires on DM Enter`;
-    const checks = notReady.map(c => `<span class="queue-check" style="opacity:0.5">${c}</span>`).join('');
+    const checks = outstanding.map(c => `<span class="queue-check" style="opacity:0.5">${c}</span>`).join('');
     _waitingEl.innerHTML = `<span class="queue-label">${label}</span>${checks}`;
   } else {
     _waitingEl.style.display = 'none';
