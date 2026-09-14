@@ -157,6 +157,36 @@ def _synth_sfx(name: str) -> Optional["np.ndarray"]:
     if not _HAS_NUMPY:
         return None
 
+    # Dice pad: fired by the roller itself, not by narration text. Two sounds
+    # because the pad has two beats — a ~1s tumble while the reel spins, and
+    # a single knock when it locks on the result.
+    if name == "dice_roll":
+        n   = int(SR * 1.05)
+        t   = np.arange(n) / SR
+        rng = np.random.default_rng()
+        out = np.zeros(n)
+        # Clicks spaced like the reel's easing: dense at first, then sparse.
+        pos = 0.0
+        gap = 0.028
+        while pos < 1.0:
+            i = int(pos * SR)
+            k = int(SR * 0.012)
+            if i + k < n:
+                click = _fft_bp(_noise(k), 1400, 5200) * np.exp(-np.arange(k) / SR * 320.0)
+                out[i:i + k] += click * rng.uniform(0.5, 1.0)
+            pos += gap
+            gap *= 1.09
+        # A faint low body so it reads as a die on wood, not static.
+        out += _fft_lp(_noise(n), 240) * np.exp(-t * 3.0) * 0.12
+        return out * 0.7
+
+    if name == "dice_land":
+        n   = int(SR * 0.30)
+        t   = np.arange(n) / SR
+        knock = _fft_lp(_noise(n), 900) * np.exp(-t * 34.0) * 0.9
+        body  = _sine(n, 160) * np.exp(-t * 26.0) * 0.35
+        return knock + body
+
     if name == "impact":
         n   = int(SR * 0.35)
         t   = np.arange(n) / SR

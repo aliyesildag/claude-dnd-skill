@@ -6343,8 +6343,11 @@ function _audioCtx() {
   return _actx;
 }
 
-async function _playSfx(name) {
-  if (!_sfxOn) return;
+// `force` bypasses the Sound Effects toggle. That toggle governs ambience
+// fired from narration text; the dice pad's own sounds are feedback for a
+// button the player just pressed, and belong on regardless.
+async function _playSfx(name, force = false) {
+  if (!_sfxOn && !force) return;
   try {
     if (!_sfxCache[name]) {
       const r = await fetch(`/audio/sfx/${name}`);
@@ -6352,7 +6355,7 @@ async function _playSfx(name) {
       const ab  = await r.arrayBuffer();
       _sfxCache[name] = await _audioCtx().decodeAudioData(ab);
     }
-    if (!_sfxOn) return;
+    if (!_sfxOn && !force) return;
     const src = _audioCtx().createBufferSource();
     src.buffer = _sfxCache[name];
     src.connect(_audioCtx().destination);
@@ -8272,6 +8275,7 @@ function _initDicePad() {
     return new Promise(resolve => {
       reel.classList.add('spinning');
       reel.classList.remove('locked');
+      _playSfx('dice_roll', true);
       let delay = 40;             // ms between ticks
       const start = performance.now();
       const minMs = 900;          // minimum spin duration
@@ -8289,6 +8293,7 @@ function _initDicePad() {
   function lockTo(value) {
     reel.classList.remove('spinning');
     reel.textContent = String(value);
+    _playSfx('dice_land', true);
     // restart animation
     reel.classList.remove('locked');
     void reel.offsetWidth;
