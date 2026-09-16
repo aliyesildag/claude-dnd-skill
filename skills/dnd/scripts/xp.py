@@ -27,6 +27,7 @@ import sys
 import os
 import re
 import argparse
+import json
 import subprocess
 import pathlib
 
@@ -96,6 +97,7 @@ DIFF_LABELS: dict[int, str] = {0: "Easy", 1: "Medium", 2: "Hard", 3: "Deadly"}
 from paths import find_campaign as _find_campaign, campaigns_dir as _campaigns_dir, display_dir as _display_dir
 CAMPAIGNS_DIR = _campaigns_dir()
 DISPLAY_SCRIPT = _display_dir() / "push_stats.py"
+SEND_SCRIPT    = _display_dir() / "send.py"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -247,6 +249,31 @@ def _push_xp_display(char_name: str, new_xp: int, current_level: int) -> None:
     )
 
 
+def _push_levelup_block(leveled: list[tuple[str, int]], per_player: int) -> None:
+    """Announce pending level-ups on the display (fire-and-forget).
+
+    The sidebar bar only fills to 100% and stops — nothing on screen says a
+    level is actually due, and the ⚠ marker written into the sheet is visible
+    only in the DM's terminal. This puts it in front of the table.
+    """
+    if not leveled:
+        return
+    names  = [name for name, _ in leveled]
+    levels = {lvl for _, lvl in leveled}
+    reason = (f"LEVEL UP PENDING — Level {levels.pop()}" if len(levels) == 1
+              else "LEVEL UP PENDING — " + ", ".join(f"{n} to {l}" for n, l in leveled))
+    payload = {
+        "names":   names,
+        "xp":      per_player,
+        "reason":  reason,
+        "summary": f"{', '.join(names)} — +{per_player} XP ({reason})",
+    }
+    subprocess.run(
+        [sys.executable, str(SEND_SCRIPT), "--xp-award", json.dumps(payload)],
+        capture_output=True, stdin=subprocess.DEVNULL,
+    )
+
+
 # ── Subcommands ───────────────────────────────────────────────────────────────
 
 def cmd_calc(args: argparse.Namespace) -> None:
@@ -339,7 +366,7 @@ def cmd_award(args: argparse.Namespace) -> None:
 
     # Apply XP to each character
     print()
-    any_levelup = False
+    leveled_chars: list[tuple[str, int]] = []
     for c in chars:
         old_xp  = c["xp"]
         new_xp  = old_xp + per_player
@@ -352,10 +379,11 @@ def cmd_award(args: argparse.Namespace) -> None:
         rem_note   = "" if leveled else f"  ({remaining:,} to Level {c['level'] + 1})"
         print(f"  {c['name']}: {old_xp:,} + {per_player:,} = {new_xp:,} / {next_lvl:,}{rem_note}{up_tag}")
         if leveled:
-            any_levelup = True
+            leveled_chars.append((c["name"], c["level"] + 1))
 
-    if any_levelup:
-        print("\n  Level-up pending — run /dnd character level-up")
+    if leveled_chars:
+        _push_levelup_block(leveled_chars, per_player)
+        print("\n  Level-up pending — run /dm:dnd level up")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

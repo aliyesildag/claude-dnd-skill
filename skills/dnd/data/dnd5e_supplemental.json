@@ -1,7 +1,10 @@
 {
   "_meta": {
     "description": "Supplemental entries for non-SRD content used in active campaigns",
-    "sources": ["Xanathar's Guide to Everything", "Player's Handbook (Thief Archetype)"]
+    "sources": [
+      "Xanathar's Guide to Everything",
+      "Player's Handbook (Thief Archetype)"
+    ]
   },
   "spells": [
     {
@@ -11,14 +14,84 @@
       "school": "Necromancy",
       "casting_time": "1 action",
       "range": "60 feet",
-      "components": ["V", "S"],
+      "components": [
+        "V",
+        "S"
+      ],
       "duration": "Instantaneous",
       "concentration": false,
       "ritual": false,
-      "classes": ["Cleric", "Warlock", "Wizard"],
+      "classes": [
+        "Cleric",
+        "Warlock",
+        "Wizard"
+      ],
       "description": "You point at one creature you can see within range, and the sound of a dolorous bell fills the air around it for a moment. The target must succeed on a Wisdom saving throw or take 1d8 necrotic damage. If the target is missing any of its hit points, it instead takes 1d12 necrotic damage.\n\nThe spell's damage increases by one die when you reach 5th level (2d8 or 2d12), 11th level (3d8 or 3d12), and 17th level (4d8 or 4d12).",
       "source": "Xanathar's Guide to Everything, p. 169",
       "wikidot_url": "https://dnd5e.wikidot.com/spell:toll-the-dead"
+    },
+    {
+      "name": "1. seviyede b\u00fcy\u00fc YOK.",
+      "index": "1-seviyede-b-y-yok",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:1-seviyede-b-y-yok",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:1-seviyede-b-y-yok",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "Damage",
+      "index": "damage",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:damage",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:damage",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "Spellcasting Ability:",
+      "index": "spellcasting-ability",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:spellcasting-ability",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:spellcasting-ability",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "Save DC:",
+      "index": "save-dc",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:save-dc",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:save-dc",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "Attack Bonus:",
+      "index": "attack-bonus",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:attack-bonus",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:attack-bonus",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "Magic Initiate (Druid)",
+      "index": "magic-initiate-druid",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:magic-initiate-druid",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:magic-initiate-druid",
+      "level": 0,
+      "school": ""
+    },
+    {
+      "name": "slot harcamadan",
+      "index": "slot-harcamadan",
+      "description": "See full description at https://dnd5e.wikidot.com/spell:slot-harcamadan",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:slot-harcamadan",
+      "level": 0,
+      "school": ""
     }
   ],
   "features": [
@@ -27,7 +100,7 @@
       "index": "circle-of-spores",
       "class": "Druid",
       "level_req": 2,
-      "description": "The Circle of Spores druid views living and dead matter as interconnected parts of the same cycle of life. Death is not an end but a transition — the spores of decay become the seeds of new growth. Druids of this circle harness that connection, animating the recently dead and infecting living creatures with transformative fungal growth.\n\nSpells always prepared (Circle Spells): Blindness/Deafness (2nd), Gentle Repose (2nd).",
+      "description": "The Circle of Spores druid views living and dead matter as interconnected parts of the same cycle of life. Death is not an end but a transition \u2014 the spores of decay become the seeds of new growth. Druids of this circle harness that connection, animating the recently dead and infecting living creatures with transformative fungal growth.\n\nSpells always prepared (Circle Spells): Blindness/Deafness (2nd), Gentle Repose (2nd).",
       "source": "Xanathar's Guide to Everything, p. 23",
       "wikidot_url": "https://dnd5e.wikidot.com/druid:circle-of-spores"
     },
@@ -75,6 +148,126 @@
       "description": "When you choose this archetype at 3rd level, you gain the ability to climb faster than normal; climbing no longer costs you extra movement.\n\nIn addition, when you make a running jump, the distance you cover increases by a number of feet equal to your Dexterity modifier.",
       "source": "Player's Handbook, p. 97 (Thief Archetype)",
       "wikidot_url": "https://dnd5e.wikidot.com/rogue:second-story-work"
+    },
+    {
+      "name": "Fighter (Class)",
+      "index": "fighter-class",
+      "description": "See full description at https://dnd5e.wikidot.com/fighter-class",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/fighter-class",
+      "class": ""
+    },
+    {
+      "name": "Human (Species)",
+      "index": "human-species",
+      "description": "See full description at https://dnd5e.wikidot.com/human-species",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/human-species",
+      "class": ""
+    },
+    {
+      "name": "Soldier (Background)",
+      "index": "soldier-background",
+      "description": "See full description at https://dnd5e.wikidot.com/soldier-background",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/soldier-background",
+      "class": ""
+    },
+    {
+      "name": "Origin Feat (Soldier):",
+      "index": "origin-feat-soldier",
+      "description": "See full description at https://dnd5e.wikidot.com/origin-feat-soldier",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/origin-feat-soldier",
+      "class": ""
+    },
+    {
+      "name": "Origin Feat (Human Versatile):",
+      "index": "origin-feat-human-versatile",
+      "description": "See full description at https://dnd5e.wikidot.com/origin-feat-human-versatile",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/origin-feat-human-versatile",
+      "class": ""
+    },
+    {
+      "name": "Bard (Class)",
+      "index": "bard-class",
+      "description": "See full description at https://dnd5e.wikidot.com/bard-class",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/bard-class",
+      "class": ""
+    },
+    {
+      "name": "Charlatan (Background)",
+      "index": "charlatan-background",
+      "description": "See full description at https://dnd5e.wikidot.com/charlatan-background",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/charlatan-background",
+      "class": ""
+    },
+    {
+      "name": "Origin Feat (Charlatan):",
+      "index": "origin-feat-charlatan",
+      "description": "See full description at https://dnd5e.wikidot.com/origin-feat-charlatan",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/origin-feat-charlatan",
+      "class": ""
+    },
+    {
+      "name": "Monk (Class)",
+      "index": "monk-class",
+      "description": "See full description at https://dnd5e.wikidot.com/monk-class",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/monk-class",
+      "class": ""
+    },
+    {
+      "name": "Tiefling (Species)",
+      "index": "tiefling-species",
+      "description": "See full description at https://dnd5e.wikidot.com/tiefling-species",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/tiefling-species",
+      "class": ""
+    },
+    {
+      "name": "Hermit (Background)",
+      "index": "hermit-background",
+      "description": "See full description at https://dnd5e.wikidot.com/hermit-background",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/hermit-background",
+      "class": ""
+    },
+    {
+      "name": "Origin Feat (2024):",
+      "index": "origin-feat-2024",
+      "description": "See full description at https://dnd5e.wikidot.com/origin-feat-2024",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/origin-feat-2024",
+      "class": ""
+    },
+    {
+      "name": "Druid (Class)",
+      "index": "druid-class",
+      "description": "See full description at https://dnd5e.wikidot.com/druid-class",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/druid-class",
+      "class": ""
+    },
+    {
+      "name": "Elf (Species) \u2014 Wood Elf",
+      "index": "elf-species-wood-elf",
+      "description": "See full description at https://dnd5e.wikidot.com/elf-species-wood-elf",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/elf-species-wood-elf",
+      "class": ""
+    },
+    {
+      "name": "Guide (Background)",
+      "index": "guide-background",
+      "description": "See full description at https://dnd5e.wikidot.com/guide-background",
+      "source": "dnd5e.wikidot.com (auto-fetched)",
+      "wikidot_url": "https://dnd5e.wikidot.com/guide-background",
+      "class": ""
     }
   ]
 }

@@ -12,6 +12,8 @@ Usage:
 
     python3 character.py levelup --class fighter --from 1 --to 2 \\
         --hp-roll 6 --con-mod 2
+        --to defaults to --from + 1. Multi-level jumps take one roll per
+        level: --from 1 --to 4 --hp-roll 6,4,5 (omit --hp-roll for averages).
 
     python3 character.py xp --level 1 --gained 150
         Print XP total and whether level-up threshold is reached.
@@ -152,9 +154,25 @@ def do_calc(args: list[str]):
 def do_levelup(args: list[str]):
     cls = args[args.index("--class") + 1].lower() if "--class" in args else "fighter"
     from_lvl = int(args[args.index("--from") + 1]) if "--from" in args else 1
-    to_lvl = from_lvl + 1
-    hp_roll = int(args[args.index("--hp-roll") + 1]) if "--hp-roll" in args else None
+    to_lvl = int(args[args.index("--to") + 1]) if "--to" in args else from_lvl + 1
     con_mod_val = int(args[args.index("--con-mod") + 1]) if "--con-mod" in args else 0
+
+    if to_lvl <= from_lvl:
+        print(f"  --to ({to_lvl}) must be above --from ({from_lvl}).")
+        return
+    if to_lvl > 20:
+        print(f"  --to ({to_lvl}) exceeds the level 20 cap.")
+        return
+
+    steps = to_lvl - from_lvl
+    # One roll per level gained, so a multi-level jump takes a list: --hp-roll 6,4,5.
+    # Omit it and every step uses the class average instead.
+    rolls: list[int] | None = None
+    if "--hp-roll" in args:
+        rolls = [int(r) for r in args[args.index("--hp-roll") + 1].split(",") if r.strip()]
+        if len(rolls) != steps:
+            print(f"  --hp-roll needs {steps} value(s) for {from_lvl} → {to_lvl}, got {len(rolls)}.")
+            return
 
     hd = HIT_DICE.get(cls, 8)
     prof_old = PROF_BONUS.get(from_lvl, 2)
@@ -163,12 +181,18 @@ def do_levelup(args: list[str]):
     print(f"\n  Level Up: {cls.title()} {from_lvl} → {to_lvl}")
     print(f"  Proficiency bonus: +{prof_old} → +{prof_new}")
 
-    if hp_roll is not None:
-        hp_gained = hp_roll + con_mod_val
-        print(f"  HP gained: d{hd}({hp_roll}) + CON({fmt(con_mod_val)}) = {hp_gained}")
+    if rolls is not None:
+        hp_gained = sum(rolls) + con_mod_val * steps
+        detail = " + ".join(f"d{hd}({r})" for r in rolls)
+        print(f"  HP gained: {detail} + CON({fmt(con_mod_val)})×{steps} = {hp_gained}")
     else:
-        avg = (hd // 2 + 1) + con_mod_val
-        print(f"  HP gained (avg): {avg}  ({hd//2+1} + CON {fmt(con_mod_val)})")
+        per_level = (hd // 2 + 1) + con_mod_val
+        print(f"  HP gained (avg): {per_level * steps}"
+              f"  ({hd//2+1} + CON {fmt(con_mod_val)}){f' ×{steps}' if steps > 1 else ''}")
+
+    if steps > 1:
+        print(f"  Levels gained: {steps} — apply class features for each of "
+              f"{', '.join(str(l) for l in range(from_lvl + 1, to_lvl + 1))}")
 
     print(f"  XP threshold for level {to_lvl}: {XP_THRESHOLDS.get(to_lvl, 'MAX')}")
     print()

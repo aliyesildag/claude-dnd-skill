@@ -12,6 +12,7 @@ Usage:
     python3 build_srd.py             # build/rebuild the dataset
     python3 build_srd.py --status    # show current dataset metadata
     python3 build_srd.py --no-fvtt   # skip FoundryVTT features (faster, spells/items only)
+    python3 build_srd.py --force     # write even if the build lost records to fetch failures
 """
 
 from __future__ import annotations  # PEP 604 annotations on Python 3.9
@@ -69,6 +70,12 @@ BITS_FILES_2024 = {
     "subspecies":                 "5e-SRD-Subspecies.json",
     "backgrounds":                "5e-SRD-Backgrounds.json",
     "feats":                      "5e-SRD-Feats.json",
+    # Species/subspecies records list their traits by name only; the trait
+    # text itself lives here, so without it every racial trait is a bare label.
+    "traits":                     "5e-SRD-Traits.json",
+    # Subclass overview docs (summary + feature list) to accompany the
+    # per-feature records pulled from foundry's subclass-features folders.
+    "subclasses":                 "5e-SRD-Subclasses.json",
 }
 
 # 2024 spells are sourced from foundryvtt/dnd5e packs/_source/spells24/
@@ -99,6 +106,43 @@ def _bits_url(ruleset: str) -> str:
     return f"{RAW_5EBITS_BASE}/{sub}"
 
 
+def _is_contentless_spell(r: dict) -> bool:
+    """A spell record with no description and no casting time is an item stub,
+    not a spell."""
+    return not (r.get("description") or "").strip() and not (r.get("casting_time") or "").strip()
+
+
+def _is_contentless_monster(r: dict) -> bool:
+    """A stat block with no description, no AC and no ability scores is a
+    conjured token, not a creature."""
+    if (r.get("description") or "").strip():
+        return False
+    if r.get("ac"):
+        return False
+    return not any(r.get(a) for a in ("str", "dex", "con", "int", "wis", "cha"))
+
+
+def _categories_lost(out_file: str, counts: dict, tolerance: float = 1.0) -> dict:
+    """Compare a pending build against the dataset already on disk.
+
+    Returns {category: (old_count, new_count)} for every category that shrank
+    below `tolerance` of its previous size — the signature of a build that lost
+    fetches to a network failure rather than to an upstream change. Defaults to
+    flagging any shrink at all: an SRD rebuild that loses two spells out of 340
+    looks healthy in the totals and is exactly the case worth catching.
+    """
+    if not os.path.exists(out_file):
+        return {}
+    try:
+        with open(out_file, encoding="utf-8") as f:
+            prev = json.load(f).get("_meta", {}).get("record_counts", {})
+    except (OSError, ValueError):
+        return {}
+    return {cat: (was, counts.get(cat, 0))
+            for cat, was in prev.items()
+            if was and counts.get(cat, 0) < was * tolerance}
+
+
 def _out_file(ruleset: str) -> str:
     """Return output path for the given ruleset's compiled SRD."""
     name = "dnd5e_srd_2024.json" if ruleset == RULESET_2024 else "dnd5e_srd.json"
@@ -114,16 +158,26 @@ BITS_FILES = BITS_FILES_2014
 
 # ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-def _fetch(url: str, as_json: bool = False):
-    """Fetch URL, return parsed JSON or raw text. Returns None on error."""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "dnd-skill-build/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
-        return json.loads(data) if as_json else data.decode("utf-8")
-    except Exception as e:
-        print(f"    ✗ {url}: {e}", file=sys.stderr)
-        return None
+def _fetch(url: str, as_json: bool = False, attempts: int = 3):
+    """Fetch URL, return parsed JSON or raw text. Returns None on error.
+
+    A build makes ~800 requests, so a transient SSL or DNS hiccup is close to
+    inevitable and silently costs records. Retry with a widening backoff and
+    only report the failure once every attempt is spent.
+    """
+    last_err = None
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "dnd-skill-build/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            return json.loads(data) if as_json else data.decode("utf-8")
+        except Exception as e:
+            last_err = e
+            if attempt < attempts - 1:
+                time.sleep(2 ** attempt)
+    print(f"    ✗ {url}: {last_err}", file=sys.stderr)
+    return None
 
 
 def _fetch_json(url: str):
@@ -140,6 +194,14 @@ def _strip_html(html: str) -> str:
     """Convert FoundryVTT HTML description to clean plain text."""
     if not html:
         return ""
+    # Foundry's <section class="fvtt advice"> callouts are VTT software
+    # instructions ("drag it onto your character sheet", "right click your
+    # Actor in the sidebar"), not rules text. Drop them whole.
+    html = re.sub(r'<section class="fvtt[^"]*advice"[^>]*>.*?</section>', "", html, flags=re.DOTALL)
+    # "(currently [[lookup @classes.druid.levels]])" reads a live character's
+    # level — meaningless in a static dataset, so drop the whole parenthetical
+    # rather than leaving "(currently )" behind.
+    html = re.sub(r"\s*\(\s*currently\s*\[\[lookup\s+@classes\.[^\]]+\]\]\s*\)", "", html)
     # @UUID[...]{label} → label
     html = re.sub(r"@UUID\[[^\]]*\]\{([^}]+)\}", r"\1", html)
     # [[lookup @scale.class.feature]] — resolved before _strip_html via _resolve_scale_tokens;
@@ -243,7 +305,11 @@ def _resolve_scale_tokens(html: str, scale_tables: dict) -> str:
             return "(scales with level)"
         cls_name   = inner.group(1)
         identifier = inner.group(2)
-        table = (scale_tables.get(cls_name) or {}).get(identifier)
+        by_class = scale_tables.get(cls_name) or {}
+        table    = by_class.get(identifier)
+        while table is None and "." in identifier:
+            identifier = identifier.rsplit(".", 1)[0]
+            table      = by_class.get(identifier)
         return _fmt_scale_table(table) if table else "(scales with level)"
 
     return re.sub(r'\[\[lookup\s+@scale\.[^\]]+\]\]', _replacer, html)
@@ -1502,8 +1568,9 @@ def _parse_scale_tables(class_doc: dict) -> dict:
                 continue
             if vtype == "dice":
                 n, f = val.get("number", 0), val.get("faces", 0)
-                if n and f:
-                    table[str(lvl)] = f"{n}d{f}"
+                # A null count means a single die: Martial Arts is "d6", not "1d6".
+                if f:
+                    table[str(lvl)] = f"{n}d{f}" if n else f"d{f}"
             elif vtype == "number":
                 v = val.get("value")
                 if v is not None:
@@ -1523,7 +1590,29 @@ def _parse_scale_tables(class_doc: dict) -> dict:
     return tables
 
 
-def _norm_feature(doc: dict, path: str, scale_tables=None):
+def _parse_grant_levels(class_doc: dict) -> dict:
+    """Map each granted feature's id to the level its class or subclass grants it.
+
+    A feature yml may leave `prerequisites.level` null (Champion's Superior
+    Critical, Draconic Sorcery's Draconic Spells); the only record of when it
+    arrives is the ItemGrant advancement on the parent document.
+    """
+    levels = {}
+    system = class_doc.get("system", {}) if "system" in class_doc else class_doc
+    for adv in system.get("advancement", []):
+        if not isinstance(adv, dict) or adv.get("type") != "ItemGrant":
+            continue
+        level = adv.get("level")
+        if not level:
+            continue
+        for item in (adv.get("configuration", {}) or {}).get("items", []):
+            uuid = item.get("uuid", "") if isinstance(item, dict) else str(item)
+            if uuid:
+                levels[uuid.rsplit(".", 1)[-1]] = level
+    return levels
+
+
+def _norm_feature(doc: dict, path: str, scale_tables=None, grant_levels=None):
     name = doc.get("name", "").strip()
     if not name:
         return None
@@ -1534,11 +1623,17 @@ def _norm_feature(doc: dict, path: str, scale_tables=None):
 
     # Derive class from path: packs/_source/classes24/<class>/class-features/...
     # or races: packs/_source/races/<race>/<variant>-features/...
-    parts      = path.replace("\\", "/").split("/")
-    class_name = None
+    parts         = path.replace("\\", "/").split("/")
+    class_name    = None
+    subclass_name = None
     if "classes24" in parts:
         idx        = parts.index("classes24")
         class_name = parts[idx + 1] if idx + 1 < len(parts) else None
+        # …/<class>/subclass-features/<subclass>/<feature>.yml
+        if "subclass-features" in parts:
+            sidx          = parts.index("subclass-features")
+            subclass_name = parts[sidx + 1] if sidx + 1 < len(parts) else None
+            feat_type     = "subclass"
     elif "races" in parts:
         feat_type = "race"
 
@@ -1550,7 +1645,8 @@ def _norm_feature(doc: dict, path: str, scale_tables=None):
         "index":       _slugify(name),
         "description": _strip_html(desc_html),
         "class":       class_name,
-        "level_req":   prereq.get("level"),
+        "subclass":    subclass_name,
+        "level_req":   prereq.get("level") or (grant_levels or {}).get(doc.get("_id")),
         "type":        feat_type,
     }
 
@@ -1599,6 +1695,8 @@ def _build_5ebits(ruleset: str = DEFAULT_RULESET) -> tuple[dict, list[str]]:
         "subspecies":                lambda r: r,
         "backgrounds":               lambda r: r,
         "feats":                     lambda r: r,
+        "traits":                    lambda r: r,
+        "subclasses":                lambda r: r,
     }
 
     categories: dict = {}
@@ -1707,8 +1805,9 @@ def _build_fvtt():
             continue
         if p.startswith("packs/_source/classes24/"):
             depth = p.count("/")
-            if "/class-features/" in p:
+            if "/class-features/" in p or "/subclass-features/" in p:
                 # e.g. packs/_source/classes24/rogue/class-features/SneakAttack.yml (5 slashes)
+                # e.g. packs/_source/classes24/druid/subclass-features/circle-of-land/lands-aid.yml
                 feature_paths.append(p)
             elif depth == 4:
                 # e.g. packs/_source/classes24/rogue/Rogue.yml — class document itself (4 slashes)
@@ -1721,6 +1820,9 @@ def _build_fvtt():
     # Fetch class YAMLs and extract scale tables
     # scale_tables: {class_name: {identifier: {level_str: value_str}}}
     scale_tables = {}
+    # grant_levels: {feature _id: level} — some features carry no level of their
+    # own and are only dated by the grant that hands them out.
+    grant_levels: dict = {}
     for path in class_yml_paths:
         raw = _fetch(f"{RAW_FVTT}/{path}")
         if not raw:
@@ -1736,11 +1838,14 @@ def _build_fvtt():
             continue
         idx        = parts.index("classes24")
         class_name = parts[idx + 1] if idx + 1 < len(parts) else None
-        if not class_name:
+        ident      = ((doc.get("system") or {}).get("identifier") or "").strip()
+        key        = ident or class_name
+        if not key:
             continue
         tables = _parse_scale_tables(doc)
         if tables:
-            scale_tables[class_name] = tables
+            scale_tables.setdefault(key, {}).update(tables)
+        grant_levels.update(_parse_grant_levels(doc))
 
     if scale_tables:
         resolved = sum(len(v) for v in scale_tables.values())
@@ -1761,7 +1866,7 @@ def _build_fvtt():
             continue
         if not isinstance(doc, dict):
             continue
-        feat = _norm_feature(doc, path, scale_tables)
+        feat = _norm_feature(doc, path, scale_tables, grant_levels)
         if feat and feat["description"]:
             features.append(feat)
         if i % 50 == 0:
@@ -1815,7 +1920,8 @@ def cmd_status(ruleset: str = DEFAULT_RULESET) -> None:
 
 
 def cmd_build(skip_fvtt: bool = False,
-              ruleset: str = DEFAULT_RULESET) -> None:
+              ruleset: str = DEFAULT_RULESET,
+              force: bool = False) -> int:
     os.makedirs(DATA_DIR, exist_ok=True)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out_file = _out_file(ruleset)
@@ -1847,19 +1953,44 @@ def cmd_build(skip_fvtt: bool = False,
         features, _ = _build_fvtt()
     categories["features"] = features
 
+    # Foundry ships VTT scaffolding alongside rules content: the token actors a
+    # spell conjures (Mage Hand, Unseen Servant, each Dancing Light size) and
+    # item stubs like Goodberry's "Magical Berries". They carry a name and
+    # nothing else, so they only surface as empty hits in lookups. Cross-checked
+    # against the SRD 5.2 PDF: dropping these loses no actual spell or monster.
+    for cat, is_empty in (("spells", _is_contentless_spell),
+                          ("monsters", _is_contentless_monster)):
+        recs = categories.get(cat) or []
+        kept = [r for r in recs if not is_empty(r)]
+        if len(kept) != len(recs):
+            dropped = [r.get("name", "?") for r in recs if is_empty(r)]
+            print(f"  dropped {len(dropped)} contentless {cat}: "
+                  f"{', '.join(dropped[:4])}{' …' if len(dropped) > 4 else ''}")
+            categories[cat] = kept
+
     counts = {k: len(v) for k, v in categories.items()}
     total  = sum(counts.values())
 
-    license_attribution = [
-        "Includes content from D&D 5e SRD 5.1 (CC-BY-4.0) — "
-        "Wizards of the Coast.",
-    ]
+    # CC-BY-4.0 requires this statement verbatim, and the SRD's legal page asks
+    # that no other attribution to Wizards accompany it — so upstream repos are
+    # credited separately under `sources`, not folded into this string.
     if ruleset == RULESET_2024:
-        license_attribution.append(
-            "Includes content from D&D 5e SRD 5.2 (2024) (CC-BY-4.0) — "
-            "Wizards of the Coast, via foundryvtt/dnd5e (MIT) and "
-            "5e-bits/5e-database."
-        )
+        license_attribution = [
+            'This work includes material from the System Reference Document 5.2 '
+            '("SRD 5.2") by Wizards of the Coast LLC, available at '
+            'https://www.dndbeyond.com/srd. The SRD 5.2 is licensed under the '
+            'Creative Commons Attribution 4.0 International License, available at '
+            'https://creativecommons.org/licenses/by/4.0/legalcode.'
+        ]
+    else:
+        license_attribution = [
+            'This work includes material from the System Reference Document 5.1 '
+            '("SRD 5.1") by Wizards of the Coast LLC, available at '
+            'https://dnd.wizards.com/resources/systems-reference-document. The '
+            'SRD 5.1 is licensed under the Creative Commons Attribution 4.0 '
+            'International License, available at '
+            'https://creativecommons.org/licenses/by/4.0/legalcode.'
+        ]
 
     dataset = {
         "_meta": {
@@ -1890,6 +2021,19 @@ def cmd_build(skip_fvtt: bool = False,
         **categories,
     }
 
+    # A dropped network connection mid-build yields a partial dataset that
+    # would otherwise silently overwrite a complete one. Refuse to shrink an
+    # existing dataset by more than a fifth in any category unless forced.
+    shrunk = _categories_lost(out_file, counts)
+    if shrunk and not force:
+        print()
+        print("  ✗ Refusing to write — the new build is missing records:")
+        for cat, (was, now_) in sorted(shrunk.items()):
+            print(f"      {cat:28} {was} → {now_}")
+        print(f"  Existing dataset left untouched: {out_file}")
+        print("  Re-run when the network is stable, or pass --force to overwrite.")
+        return 1
+
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(dataset, f, separators=(",", ":"))
 
@@ -1916,7 +2060,8 @@ def main() -> None:
     if "--status" in args:
         cmd_status(ruleset)
     else:
-        cmd_build(skip_fvtt="--no-fvtt" in args, ruleset=ruleset)
+        sys.exit(cmd_build(skip_fvtt="--no-fvtt" in args, ruleset=ruleset,
+                           force="--force" in args) or 0)
 
 
 if __name__ == "__main__":

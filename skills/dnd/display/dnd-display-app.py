@@ -1208,6 +1208,25 @@ def serve_icon(filename):
     return send_from_directory(_icons_dir, filename)
 
 
+@app.route("/scenes/<path:filename>")
+def serve_scene(filename):
+    """Serve pre-generated scene images from <campaign>/scenes/ (or DND_SCENES_DIR).
+
+    Lets the DM show hand-made artwork via `send.py --image-file <name>` instead
+    of a generated URL. Only the active campaign's folder is exposed.
+    """
+    scenes_dir = os.environ.get("DND_SCENES_DIR", "").strip()
+    if not scenes_dir:
+        name = _active_campaign_name()
+        if not name:
+            return "no active campaign", 404
+        try:
+            scenes_dir = str(_find_campaign(name) / "scenes")
+        except ValueError:
+            return "campaign not found", 404
+    return send_from_directory(scenes_dir, filename)
+
+
 @app.route("/favicon.ico")
 def favicon():
     _icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
@@ -1395,7 +1414,7 @@ def chunk():
     # image block legitimately has no body text.
     scene_image = str(data.get("scene_image") or "").strip()
     if scene_image:
-        if not scene_image.startswith(("http://", "https://")):
+        if not scene_image.startswith(("http://", "https://", "/scenes/")):
             return "bad scene_image url", 400
         img_payload: dict = {"scene_image": scene_image[:2000]}
         prompt = str(data.get("prompt") or "").strip()[:300]

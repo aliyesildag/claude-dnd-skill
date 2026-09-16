@@ -133,6 +133,8 @@ def main() -> None:
                         help="Set temp HP; use 0 to clear (requires --player)")
     parser.add_argument("--xp", nargs=2, metavar=("CURRENT", "NEXT"), type=int,
                         help="Update XP (requires --player)")
+    parser.add_argument("--level", metavar="N", type=int,
+                        help="Update character level (requires --player)")
     parser.add_argument("--hit-dice-use", action="store_true",
                         help="Spend one hit die (requires --player)")
     parser.add_argument("--hit-dice-restore", metavar="N", type=int,
@@ -210,6 +212,7 @@ def main() -> None:
     # ── Per-player shorthands ──────────────────────────────────────────────────
     _player_flags = (
         args.hp or args.temp_hp is not None or args.xp
+        or args.level is not None
         or args.second_wind is not None
         or args.conditions is not None or args.conditions_add or args.conditions_remove
         or args.concentrate is not None
@@ -231,6 +234,8 @@ def main() -> None:
             player_update["hp"]["temp"] = args.temp_hp
         if args.xp:
             player_update["xp"] = {"current": args.xp[0], "next": args.xp[1]}
+        if args.level is not None:
+            player_update["level"] = args.level
         if args.second_wind is not None:
             player_update["second_wind"] = args.second_wind.lower() == "true"
         if args.conditions is not None:

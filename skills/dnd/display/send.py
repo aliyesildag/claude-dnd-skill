@@ -438,6 +438,9 @@ def main() -> None:
         help="Show a generated scene image above the narration. PROMPT must be "
              "ENGLISH regardless of the table's language — the model produces "
              "mush from non-English prompts.")
+    parser.add_argument("--image-file", metavar="FILENAME",
+        help="Show a pre-made scene image served from the campaign's scenes/ folder "
+             "(display route /scenes/<FILENAME>). Overrides --image.")
     parser.add_argument("--image-seed", type=int, metavar="N",
         help="Pin the image seed. Default: derived from the prompt, so the same "
              "scene always yields the same picture.")
@@ -611,8 +614,19 @@ def main() -> None:
     _has_content_flag = bool(args.player or args.npc or args.dice or args.tutor or args.action)
     if _has_content_flag:
         text = sys.stdin.read()
+    elif sys.stdin.isatty():
+        text = ""
+    elif (args.image or args.image_file):
+        # Image-only sends may run without a heredoc; never block on an open
+        # but empty stdin (background shells keep the pipe open forever).
+        import select
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+        except (ValueError, OSError):
+            ready = []
+        text = sys.stdin.read() if ready else ""
     else:
-        text = "" if sys.stdin.isatty() else sys.stdin.read()
+        text = sys.stdin.read()
     token = _read_token()
 
     # ── Inspiration award/spend ──────────────────────────────────────────────
@@ -691,7 +705,12 @@ def main() -> None:
     # ── Scene image send ──────────────────────────────────────────────────────
     # Posted before the text so the picture lands above the narration it frames.
     # Only the URL travels; the browser fetches the image itself.
-    if args.image and args.image.strip():
+    if args.image_file and args.image_file.strip():
+        _post(FLASK_URL, json.dumps({
+            "scene_image": "/scenes/" + urllib.parse.quote(args.image_file.strip()),
+            "prompt": (args.image or "").strip(),
+        }).encode("utf-8"), token)
+    elif args.image and args.image.strip():
         image_url = _build_image_url(args.image, args.image_style, args.image_seed)
         _post(FLASK_URL, json.dumps({
             "scene_image": image_url,

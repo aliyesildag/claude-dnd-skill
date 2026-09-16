@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "description": "Supplemental entries for non-SRD content",
+    "ruleset": "2024",
+    "sources": [],
+    "note": "supplemental sources currently 2014-only — wikidot.com has no 2024 equivalent. Mechanics that match 2014 (e.g. monster manual content) should be looked up via the 2014 supplemental file."
+  },
+  "spells": [
+    {
+      "name": "Toll the Dead",
+      "index": "toll-the-dead",
+      "level": 0,
+      "school": "Necromancy",
+      "casting_time": "1 action",
+      "range": "60 feet",
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": "Instantaneous",
+      "concentration": false,
+      "ritual": false,
+      "classes": [
+        "Cleric",
+        "Warlock",
+        "Wizard"
+      ],
+      "description": "You point at one creature you can see within range, and the sound of a dolorous bell fills the air around it for a moment. The target must succeed on a Wisdom saving throw or take 1d8 necrotic damage. If the target is missing any of its hit points, it instead takes 1d12 necrotic damage.\n\nThe spell's damage increases by one die when you reach 5th level (2d8 or 2d12), 11th level (3d8 or 3d12), and 17th level (4d8 or 4d12).",
+      "source": "Xanathar's Guide to Everything, p. 169 (2014 supplemental'ından kopyalandı)",
+      "wikidot_url": "https://dnd5e.wikidot.com/spell:toll-the-dead",
+      "_ruleset_note": "Xanathar's (2014) metni; 2024 PHB bu büyüyü içermiyor."
+    }
+  ],
+  "features": []
+}

@@ -70,10 +70,32 @@ CATEGORY_MAP = {
     "monsters":    "monsters",
     "feature":     "features",
     "features":    "features",
-    "feat":        "features",
+    # 2024 splits "feat" (an origin/general feat you pick) from "feature"
+    # (something your class grants). 2014 had no feats table, so "feat" kept
+    # pointing at features there; with the 2024 dataset it gets its own key.
+    "feat":        "feats",
+    "feats":       "feats",
+    "trait":       "traits",
+    "traits":      "traits",
+    "species":     "species",
+    "race":        "species",
+    "races":       "species",
+    "subspecies":  "subspecies",
+    "lineage":     "subspecies",
+    "background":  "backgrounds",
+    "backgrounds": "backgrounds",
+    "subclass":    "subclasses",
+    "subclasses":  "subclasses",
+    "mastery":     "weapon_mastery_properties",
+    "weapon_mastery": "weapon_mastery_properties",
+    "weapon_mastery_properties": "weapon_mastery_properties",
 }
 
-ALL_CATEGORIES = ["spells", "equipment", "magic_items", "conditions", "monsters", "features"]
+ALL_CATEGORIES = ["spells", "equipment", "magic_items", "conditions", "monsters", "features",
+                  # 2024-only categories. The 2014 dataset has no such keys, so
+                  # every scan below resolves them to an empty list and skips on.
+                  "feats", "traits", "species", "subspecies", "backgrounds",
+                  "subclasses", "weapon_mastery_properties"]
 
 # ─── Data loading / index ─────────────────────────────────────────────────────
 
@@ -305,6 +327,77 @@ def _fmt_feature(r: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_trait(r: dict) -> str:
+    """Species traits, origin feats and weapon mastery properties: a name, an
+    optional owner, and prose."""
+    sp = r.get("species")
+    if isinstance(sp, list):
+        owner = ", ".join(x.get("name", "") if isinstance(x, dict) else str(x) for x in sp)
+    elif isinstance(sp, dict):
+        owner = sp.get("name", "")
+    else:
+        owner = sp or ""
+    head = f"## {r.get('name','?')}"
+    if owner:
+        head += f"  [{owner}]"
+    return "\n".join([head, "", r.get("description", "")])
+
+
+def _fmt_background(r: dict) -> str:
+    lines = [f"## {r.get('name','?')}  [background]", ""]
+    for label, key in (("Ability Scores", "ability_scores"), ("Feat", "feat"),
+                       ("Skill Proficiencies", "skill_proficiencies"),
+                       ("Tool Proficiency", "tool_proficiency")):
+        v = r.get(key)
+        if isinstance(v, list):
+            v = ", ".join(x.get("name", "") if isinstance(x, dict) else str(x) for x in v)
+        elif isinstance(v, dict):
+            v = v.get("name", "")
+        if v:
+            lines.append(f"{label}: {v}")
+    if r.get("description"):
+        lines += ["", r["description"]]
+    return "\n".join(lines)
+
+
+def _fmt_species(r: dict) -> str:
+    traits = r.get("traits") or []
+    names  = [t.get("name", "") if isinstance(t, dict) else str(t) for t in traits]
+    lines  = [f"## {r.get('name','?')}  [species]", ""]
+    for label, key in (("Size", "size"), ("Speed", "speed")):
+        v = r.get(key)
+        if isinstance(v, dict):
+            v = v.get("name", "")
+        if v:
+            lines.append(f"{label}: {v}")
+    if names:
+        lines += ["", "Traits: " + ", ".join(n for n in names if n)]
+    if r.get("description"):
+        lines += ["", r["description"]]
+    return "\n".join(lines)
+
+
+def _fmt_subclass(r: dict) -> str:
+    cls = r.get("class")
+    cls = cls.get("name", "") if isinstance(cls, dict) else (cls or "")
+    head = f"## {r.get('name','?')}"
+    if cls:
+        head += f"  [{cls} subclass]"
+    lines = [head, ""]
+    if r.get("summary"):
+        lines += [str(r["summary"]), ""]
+    feats = r.get("features") or []
+    names = [f.get("name", "") if isinstance(f, dict) else str(f) for f in feats]
+    # Upstream sometimes inlines a feature's whole text into its name; keep the
+    # list scannable by showing only the leading clause.
+    names = [n.split(".")[0][:80] for n in names if n]
+    if names:
+        lines += ["Features: " + " · ".join(names), ""]
+    if r.get("description"):
+        lines.append(str(r["description"]))
+    return "\n".join(lines).rstrip()
+
+
 FORMATTERS = {
     "spells":      _fmt_spell,
     "equipment":   _fmt_equipment,
@@ -312,6 +405,13 @@ FORMATTERS = {
     "conditions":  _fmt_condition,
     "monsters":    _fmt_monster,
     "features":    _fmt_feature,
+    "traits":      _fmt_trait,
+    "feats":       _fmt_trait,
+    "weapon_mastery_properties": _fmt_trait,
+    "backgrounds": _fmt_background,
+    "species":     _fmt_species,
+    "subspecies":  _fmt_species,
+    "subclasses":  _fmt_subclass,
 }
 
 
@@ -358,6 +458,18 @@ def _fallback_categories(ruleset: str) -> set:
     return set()
 
 
+# Categories to retry when a category-scoped lookup misses. Ordered: the
+# first hit wins.
+_SIBLING_CATEGORIES = {
+    "feats":      ("features", "traits"),
+    "features":   ("feats", "traits"),
+    "traits":     ("features", "feats"),
+    "species":    ("subspecies",),
+    "subspecies": ("species",),
+    "subclasses": ("features",),
+}
+
+
 def _find_in_ruleset(query: str, cat_key, ruleset: str, top_n: int = 1):
     """Scan the dataset for `ruleset` for matches; if cat_key is given and the
     primary search misses, also scan 2014 when that category is in the
@@ -366,6 +478,18 @@ def _find_in_ruleset(query: str, cat_key, ruleset: str, top_n: int = 1):
     results = _find(query, records, top_n=top_n)
     if results:
         return results, ruleset, False
+
+    # A player says "feat" for both an origin feat and a class feature, and
+    # "trait" for anything their species grants. Retry the neighbouring table
+    # rather than reporting a miss — this also keeps `feat` working on 2014,
+    # which has no feats table at all.
+    for sibling in _SIBLING_CATEGORIES.get(cat_key, ()):
+        sib_results = _find(query, _get_records(sibling, ruleset=ruleset), top_n=top_n)
+        if sib_results:
+            # Record where it was actually found so the caller formats it as the
+            # kind of thing it is, not as the kind of thing that was asked for.
+            sib_results[0]["_sibling_cat"] = sibling
+            return sib_results, ruleset, False
 
     # Resolve fallback for category-specific lookups
     if cat_key is not None and ruleset == "2024" and cat_key in _fallback_categories("2024"):
@@ -391,6 +515,8 @@ def lookup_record(query: str, category=None, ruleset=None):
     results, hit_rs, fb = _find_in_ruleset(query, cat_key, rs, top_n=1)
 
     resolved_cat = cat_key
+    if results and results[0].get("_sibling_cat"):
+        resolved_cat = results[0].pop("_sibling_cat")
     if not results and not category:
         # Search every category in the active ruleset
         for ck in ALL_CATEGORIES:
@@ -624,11 +750,15 @@ def main() -> None:
 
     _set_active(ruleset)
 
-    if len(args) < 2:
+    if not args:
         print(__doc__)
         sys.exit(0)
 
-    category, query = args[0].lower(), " ".join(args[1:])
+    # A quoted name is a single argv entry, so `lookup.py "Adrenaline Rush"`
+    # arrives as one arg. Treat it as a cross-category query rather than
+    # printing usage at someone who asked a perfectly good question.
+    category = args[0].lower() if len(args) > 1 else ""
+    query    = " ".join(args[1:]) if len(args) > 1 else args[0]
     cat_key  = CATEGORY_MAP.get(category)
     cat_specified = category in CATEGORY_MAP
 
@@ -661,7 +791,11 @@ def main() -> None:
                 fallback_used = True
 
     # For item searches, resolve which sub-category each result came from
-    def _resolve_cat(record, rs):
+    def _resolve_cat(record, sib, rs):
+        # A sibling-category retry found this elsewhere than asked for; format
+        # it as what it is rather than as what was asked for.
+        if sib:
+            return sib
         if cat_key is not None:
             return cat_key
         for ck in ALL_CATEGORIES:
@@ -680,13 +814,15 @@ def main() -> None:
         sys.exit(0)
 
     for r in results:
+        # Pop before either branch so the internal marker never reaches output.
+        sibling_cat = r.pop("_sibling_cat", None)
         if dump_json:
             out = dict(r)
             out["_ruleset"] = hit_rs
             out["_fallback"] = fallback_used
             print(json.dumps(out, indent=2))
         else:
-            rcat = _resolve_cat(r, hit_rs)
+            rcat = _resolve_cat(r, sibling_cat, hit_rs)
             fmt  = FORMATTERS.get(rcat, lambda x: json.dumps(x, indent=2))
             text = fmt(r)
             if fallback_used:

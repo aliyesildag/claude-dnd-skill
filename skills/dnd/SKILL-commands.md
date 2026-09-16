@@ -612,7 +612,16 @@ Read `characters/<name>.md`, display cleanly. If name omitted and one character 
    |    |         | 20 | 355,000 |
 
    Insufficient XP → report deficit and stop. Only continue on explicit DM override.
-2. Read sheet. Run `character.py levelup`. Apply class features. Ask for HP roll or average. Update sheet + global roster. Narrate the growth.
+2. Read sheet. Run `character.py levelup`. Apply class features. Ask for HP roll or average. Update sheet + global roster. Push the new level to the display. Narrate the growth.
+
+   **Display push (added 2026-09-15):** the sidebar's level and the ⚠ LEVEL UP PENDING state do not clear themselves — `xp.py` fills the XP bar but never writes the level. After the sheet is updated, run:
+
+   ```
+   python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --player <name> \
+       --level <new-level> --xp <current> <next-threshold> --hp <cur> <new-max>
+   ```
+
+   Skip this and the TV keeps showing the old level next to the character's name for the rest of the session.
 
    **Ruleset-aware subclass timing (added 2026-05-08):** read campaign ruleset via `paths.campaign_ruleset(<campaign>)`.
    - **2014:** Subclass selection happens at the class's specified level (Cleric/Sorcerer/Warlock at 1; Druid/Wizard at 2; most others at 3).

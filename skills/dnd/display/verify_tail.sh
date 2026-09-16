@@ -56,7 +56,7 @@ if not isinstance(data, list):
 if not data:
     print(f"verify_tail.sh: {path} — EMPTY LIST")
     sys.exit(1)
-if not all(isinstance(e, dict) and ("text" in e or "player" in e or "npc" in e or "dice" in e) for e in data):
+if not all(isinstance(e, dict) and ("text" in e or "player" in e or "npc" in e or "dice" in e or "scene_image" in e or "xp_award" in e) for e in data):
     print(f"verify_tail.sh: {path} — entries not in expected shape")
     sys.exit(1)
 print(f"verify_tail.sh: {path} — HEALTHY ({len(data)} entries)")

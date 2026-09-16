@@ -348,8 +348,8 @@
   }
 
   .action-block p {
-    color: rgba(148, 184, 204, 0.65);
-    font-size: 0.82em;
+    color: rgba(148, 184, 204, 0.88);
+    font-size: 0.95em;
     font-style: italic;
     text-shadow: 0 1px 4px rgba(0,0,0,0.8);
     margin: 0;
@@ -443,6 +443,29 @@
     transition: opacity 700ms ease-out;
   }
   .scene-image-block img.loaded { opacity: 1; }
+  /* Hand-made scenes (/scenes/...) have no watermark: show them uncropped at
+     their natural aspect ratio instead of the generated-image letterbox. */
+  .scene-image-block.natural {
+    aspect-ratio: auto;
+    background: transparent;
+    box-shadow: none;
+    text-align: center;
+  }
+  .scene-image-block.natural img {
+    position: static;
+    display: inline-block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: 62vh;         /* portrait art must not push the text off-screen */
+    object-fit: contain;
+    border-radius: 3px;
+    box-shadow: 0 6px 26px rgba(0, 0, 0, 0.55);
+  }
+  .scene-image-block.natural::after { display: none; }
+  @media (max-width: 700px) {
+    .scene-image-block.natural img { max-height: 48vh; }
+  }
   /* Vignette so the picture sits in the dark feed instead of floating on it */
   .scene-image-block::after {
     content: '';
@@ -522,8 +545,8 @@
   }
 
   .tutor-body p {
-    font-size: 0.88em;
-    color: rgba(180, 220, 180, 0.82);
+    font-size: 1em;
+    color: rgba(180, 220, 180, 0.95);
     font-style: italic;
     line-height: 1.7;
     text-shadow: 0 1px 4px rgba(0,0,0,0.7);
@@ -790,8 +813,8 @@
   /* Concentration tag */
   .sb-concentrate {
     margin-top: 4px;
-    font-size: calc(11px * var(--ui-scale, 1));
-    color: rgba(160,120,220,0.75);
+    font-size: max(13px, calc(13px * var(--ui-scale, 1)));
+    color: rgba(170,135,230,0.92);
     font-style: italic;
     white-space: nowrap;
     overflow: hidden;
@@ -970,10 +993,10 @@
   }
   .sm-attacks-table td.atk-name { color: rgba(220,200,160,0.95); }
   .sm-attacks-table td.atk-notes {
-    color: rgba(200,185,150,0.45); font-style: italic; font-size: calc(11px * var(--ui-scale, 1));
+    color: rgba(200,185,150,0.72); font-style: italic; font-size: max(13px, calc(13px * var(--ui-scale, 1)));
   }
   .sm-spell-meta {
-    font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.45);
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); color: rgba(200,185,150,0.72);
     margin-bottom: 10px; font-style: italic;
   }
   .sm-sub-label {
@@ -1062,7 +1085,7 @@
     margin-bottom: 10px; line-height: 1.3;
   }
   #srd-body .srd-meta {
-    font-size: calc(11px * var(--ui-scale, 1)); color: rgba(180,140,60,0.55);
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); color: rgba(195,155,75,0.85);
     margin-bottom: 12px; font-style: italic;
   }
   #srd-body .srd-desc { white-space: pre-wrap; }
@@ -1100,7 +1123,7 @@
     text-align: center;
   }
   #srd-not-found {
-    font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.3);
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); color: rgba(200,185,150,0.62);
     font-style: italic; padding: 16px 0;
   }
   .sm-feature { margin-bottom: 10px; }
@@ -1122,7 +1145,7 @@
     content: '·  '; color: rgba(180,140,60,0.35);
   }
   .sm-no-data {
-    font-size: calc(12px * var(--ui-scale, 1)); color: rgba(200,185,150,0.25);
+    font-size: max(14px, calc(14px * var(--ui-scale, 1))); color: rgba(200,185,150,0.58);
     font-style: italic; text-align: center; padding: 22px 0;
   }
 
@@ -1156,12 +1179,12 @@
     text-transform: uppercase; color: rgba(220,190,60,0.92);
   }
   .inspiration-sub {
-    font-size: calc(12px * var(--ui-scale, 1)); font-style: italic;
-    color: rgba(220,190,60,0.55); margin-top: 3px;
+    font-size: max(14px, calc(14px * var(--ui-scale, 1))); font-style: italic;
+    color: rgba(220,190,60,0.82); margin-top: 3px;
   }
   .inspiration-detail {
-    font-size: calc(11px * var(--ui-scale, 1)); font-style: italic;
-    color: rgba(220,190,60,0.42); margin-top: 6px;
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); font-style: italic;
+    color: rgba(220,190,60,0.72); margin-top: 6px;
     line-height: 1.4;
   }
 
@@ -1178,7 +1201,7 @@
     letter-spacing: 1px; color: rgba(140,200,120,0.7);
   }
   .xp-detail {
-    font-size: calc(11px * var(--ui-scale, 1)); color: rgba(140,200,120,0.4);
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); color: rgba(140,200,120,0.72);
     font-style: italic; margin-top: 2px;
   }
 
@@ -1235,9 +1258,9 @@
   .milestone-detail {
     margin-top: 0.45em;
     font-style: italic;
-    font-size: calc(12px * var(--ui-scale, 1));
+    font-size: max(14px, calc(14px * var(--ui-scale, 1)));
     color: #d2b76a;
-    opacity: 0.85;
+    opacity: 1;
   }
 
   /* ── Spell slots (sidebar) ── */
@@ -1293,16 +1316,21 @@
     text-transform: uppercase; color: rgba(180,140,60,0.35); margin-bottom: 6px;
   }
   .sb-quest-item {
-    display: flex; justify-content: space-between; align-items: baseline;
-    gap: 6px; padding: 2px 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 7px; padding: 3px 0;
   }
+  /* Two lines, then ellipsis — a 210px rail cut most quest titles mid-word and
+     the status alone told the reader nothing about which quest it belonged to. */
   .sb-quest-name {
     font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.6);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+    flex: 1; min-width: 0; line-height: 1.32;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: anywhere;
   }
   .sb-quest-status {
     font-family: 'Cinzel', serif; font-size: calc(11px * var(--ui-scale, 1));
     letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap;
+    flex-shrink: 0; padding-top: 1px;
   }
   .sb-quest-status.active   { color: rgba(180,140,60,0.85); }
   .sb-quest-status.threat   { color: rgba(220,60,60,0.80); }
@@ -1317,8 +1345,8 @@
     color: rgba(200,165,80,0.75); min-width: 90px; flex-shrink: 0;
   }
   .sm-rel-role {
-    font-size: calc(11px * var(--ui-scale, 1)); font-style: italic;
-    color: rgba(160,120,220,0.6); min-width: 60px; flex-shrink: 0;
+    font-size: max(13px, calc(13px * var(--ui-scale, 1))); font-style: italic;
+    color: rgba(170,135,230,0.85); min-width: 60px; flex-shrink: 0;
   }
   .sm-rel-note { font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.5); line-height: 1.45; }
 
@@ -2177,7 +2205,7 @@
     font: 400 14px/1.5 ui-monospace, monospace;
   }
   body.input-only #cp-status {
-    color: rgba(180,140,60,0.5);
+    color: rgba(195,155,75,0.8);
     font-style: italic;
     text-align: center;
     padding: 8px 0;
@@ -2549,8 +2577,8 @@
   }
   #phone-mode-menu .pm-empty {
     padding: 8px 13px;
-    color: rgba(180, 140, 60, 0.6);
-    font-size: 0.75rem;
+    color: rgba(195, 155, 75, 0.85);
+    font-size: 0.9rem;
     font-style: italic;
   }
 
@@ -5070,11 +5098,12 @@ function renderTutorBlock(text, isReplay) {
 // The URL points at the generator; the browser fetches it directly so the
 // narration renders immediately and the picture fills in behind it.
 function renderSceneImage(url, prompt, isReplay) {
-  if (!/^https?:\/\//i.test(url || '')) return;
+  if (!/^(https?:\/\/|\/scenes\/)/i.test(url || '')) return;
   _flushForBlock();
 
   const block = document.createElement('div');
   block.className = 'scene-image-block';
+  if (typeof url === 'string' && url.startsWith('/scenes/')) block.classList.add('natural');
   if (isReplay) block.style.opacity = '0.65';
 
   const status = document.createElement('div');
@@ -5179,7 +5208,12 @@ function renderXpBlock(xpData) {
 }
 
 // ── Replay batch (reconnect / session resume) ─────────────────────────
+// Reconnects (SSE onerror → connect) and the polling fallback's /snapshot both
+// re-send the same history; render it once per page life, reset on clear.
+let _replayRendered = false;
 function renderReplayBatch(items) {
+  if (_replayRendered) return;
+  _replayRendered = true;
   flushNewBlock();
   items.forEach(item => {
     if (!item) return;
@@ -6127,11 +6161,14 @@ function updateStats(stats) {
     const prevHp = _prevHp[name];
     const newHp  = p.hp ? p.hp.current : undefined;
 
-    const existing = sidebar.querySelector(`.sb-player[data-player-name="${CSS.escape(name)}"]`);
+    // Search the whole document: a card may have been relocated out of #sidebar
+    // by a layout mode, and a missed match duplicates the card on every push.
+    const matches = document.querySelectorAll(`.sb-player[data-player-name="${CSS.escape(name)}"]`);
+    const existing = matches[0];
     const newCard = _buildPlayerCard(p, solo);
     if (existing) {
-      sidebar.insertBefore(newCard, existing);
-      existing.remove();
+      existing.parentNode.insertBefore(newCard, existing);
+      matches.forEach(el => el.remove());
     } else {
       sidebar.insertBefore(newCard, turnSection);
     }
@@ -6190,6 +6227,7 @@ function updateStats(stats) {
         const nm = document.createElement('span');
         nm.className = 'sb-quest-name';
         nm.textContent = q.name || '—';
+        nm.title = q.name || '';
         const st = document.createElement('span');
         st.className = 'sb-quest-status ' + (QCLS[(q.status||'').toLowerCase()] || 'unknown');
         st.textContent = q.status || '—';
@@ -7667,6 +7705,7 @@ function connect() {
       _onDeviceDenied(payload.device_denied);
     }
     if (payload.clear) {
+      _replayRendered = false;   // a fresh log may be replayed again
       // Wipe sidebar player data and DOM
       for (const key of Object.keys(_playerData)) delete _playerData[key];
       document.querySelectorAll('.sb-player').forEach(el => el.remove());
@@ -7729,9 +7768,21 @@ function connect() {
   };
 }
 
-connect();
-// If no SSE event lands within the grace window, the stream is being buffered.
-setTimeout(() => { if (!_sseAlive) _startPolling(); }, SSE_GRACE_MS);
+// Through a tunnel proxy (trycloudflare) SSE is buffered: the opening burst
+// may arrive and mark the stream alive, then nothing else ever does. Skip SSE
+// there and poll from the start.
+const _viaTunnel = /trycloudflare\.com$/i.test(location.hostname) || new URLSearchParams(location.search).get('poll') === '1';
+if (_viaTunnel) {
+  // connect() is what installs the real handlePayload, so it must still run;
+  // the stream itself is dropped at once and the snapshot + /tail poll take over.
+  connect();
+  try { evtSource.close(); } catch {}
+  setTimeout(_startPolling, 0);
+} else {
+  connect();
+  // If no SSE event lands within the grace window, the stream is being buffered.
+  setTimeout(() => { if (!_sseAlive) _startPolling(); }, SSE_GRACE_MS);
+}
 
 // ── Input-only mode for mobile players ───────────────────────────────────
 // Triggered by either:

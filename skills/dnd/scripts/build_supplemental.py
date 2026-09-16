@@ -296,6 +296,83 @@ def _build_entry(name: str, category: str) -> dict | None:
     return entry
 
 
+# Header lines a manual entry may carry before its prose, mapped to the record
+# fields lookup.py's formatters read.
+_MANUAL_FIELDS = {
+    "level":        "level",
+    "school":       "school",
+    "casting time": "casting_time",
+    "range":        "range",
+    "components":   "components",
+    "material":     "material",
+    "duration":     "duration",
+    "classes":      "classes",
+    "class":        "class",
+    "at higher levels": "higher_level",
+    "higher level": "higher_level",
+}
+
+
+def _parse_manual_header(text: str) -> tuple[dict, str]:
+    """Split leading `Field: value` lines off the prose that follows them.
+
+    Lets a typed-in entry render like a real record instead of collapsing the
+    whole thing into one description blob. Everything from the first
+    non-header line onward is the description.
+    """
+    fields: dict = {}
+    lines = text.strip().splitlines()
+    i = 0
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        m = re.match(r"\s*([A-Za-z ]+?)\s*:\s*(.+?)\s*$", line)
+        key = m.group(1).strip().lower() if m else None
+        if key not in _MANUAL_FIELDS:
+            break
+        fields[_MANUAL_FIELDS[key]] = m.group(2).strip()
+    else:
+        i = len(lines)
+    return fields, "\n".join(lines[i:]).strip()
+
+
+def _build_manual_entry(name: str, category: str, text: str) -> dict:
+    """Build a supplemental record from text supplied by the user.
+
+    The 2024 rules have no open-licensed dump for non-SRD content and wikidot
+    carries none either, so anything outside SRD 5.2 has to be typed in from
+    the book at the table. This is that path.
+    """
+    fields, description = _parse_manual_header(text)
+    entry: dict = {
+        "name": name,
+        "index": _slug(name),
+        "description": description or text.strip(),
+        "source": "manual entry",
+    }
+    if category == "spell":
+        lvl = fields.pop("level", "0")
+        # "Cantrip" and "0" mean the same thing to the formatter.
+        entry["level"] = 0 if str(lvl).strip().lower().startswith("cantrip") \
+            else int(re.sub(r"\D", "", str(lvl)) or 0)
+        entry["school"] = fields.pop("school", "")
+        comps = fields.pop("components", "")
+        entry["components"] = [c.strip().upper() for c in comps.split(",") if c.strip()]
+        dur = fields.pop("duration", "")
+        entry["concentration"] = "concentration" in dur.lower()
+        entry["duration"] = dur
+        entry["ritual"] = False
+        classes = fields.pop("classes", "")
+        if classes:
+            entry["classes"] = [c.strip() for c in classes.split(",") if c.strip()]
+        for k in ("casting_time", "range", "material", "higher_level"):
+            entry[k] = fields.pop(k, "")
+    else:
+        entry["class"] = fields.pop("class", "")
+        entry.update(fields)
+    return entry
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -307,6 +384,10 @@ def main() -> None:
     parser.add_argument("--add", nargs=2, metavar=("NAME", "CATEGORY"),
         action="append", default=[],
         help="Add a specific entry: --add 'Toll the Dead' spell")
+    parser.add_argument("--add-text", nargs=2, metavar=("NAME", "CATEGORY"),
+        help="Add one entry with its text read from stdin, for content that has "
+             "no open-licensed source (all non-SRD 2024 material). "
+             "e.g. build_supplemental.py --ruleset 2024 --add-text 'Thorn Whip' spell < thorn-whip.txt")
     parser.add_argument("--list", action="store_true",
         help="List all entries currently in supplemental file")
     parser.add_argument("--dry-run", action="store_true",
@@ -340,6 +421,33 @@ def main() -> None:
         return
 
     srd_names = _load_srd_names()
+
+    # --add-text short-circuits the fetch pipeline: the text is already here.
+    if args.add_text:
+        name, cat = args.add_text
+        if cat not in ("spell", "feature"):
+            print(f"--add-text category must be 'spell' or 'feature' (got {cat!r})",
+                  file=sys.stderr)
+            sys.exit(2)
+        text = sys.stdin.read()
+        if not text.strip():
+            print("No text on stdin — pipe the entry's text in, e.g. "
+                  f"... --add-text '{name}' {cat} < {_slug(name)}.txt", file=sys.stderr)
+            sys.exit(2)
+        entry   = _build_manual_entry(name, cat, text)
+        cat_key = "spells" if cat == "spell" else "features"
+        bucket  = supp.setdefault(cat_key, [])
+        for i, existing in enumerate(bucket):
+            if _norm(existing.get("name", "")) == _norm(name):
+                bucket[i] = entry
+                print(f"  [replace] {name}")
+                break
+        else:
+            bucket.append(entry)
+            print(f"  [add] {name}")
+        _save_supplemental(supp)
+        return
+
     to_fetch: list[tuple[str, str]] = []   # (name, category)
 
     # Collect from --add flags
