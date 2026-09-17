@@ -200,6 +200,11 @@ python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py \
   --factions '[{"name":"Pale Court","standing":"Allied"},{"name":"Watch","standing":"Neutral"}]'
 python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --factions '[]'   # clear all
 
+# Character portraits on the party cards: put a "portrait" path inside each
+# player's "sheet" in the --json payload (an image already in the campaign's
+# scenes/ folder). It replaces the class glyph; clicking it opens the picture.
+#   "sheet": {"portrait": "/scenes/01-yapraksever.jpg", "attacks": [...], ...}
+
 # Pinned corner map (minimap) — stays on every screen until changed, survives a
 # refresh, click enlarges it. Image must already be in the campaign's scenes/.
 python3 ${CLAUDE_SKILL_DIR}/display/send.py --minimap 49b-bolge-haritasi.jpg --label "Kavran ve çevresi"

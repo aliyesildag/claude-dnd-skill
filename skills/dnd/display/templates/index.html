@@ -296,6 +296,32 @@
 
 
 
+
+  /* ── Character portrait on the party card ─────────────────────────────
+     A player's own face, not a class glyph. Falls back to the class icon
+     when a character has no portrait. Click opens it full-size. */
+  .sb-portrait {
+    position: absolute; top: 6px; right: 6px;
+    width: 46px; height: 46px; border-radius: 3px; object-fit: cover;
+    object-position: center 22%;
+    border: 1px solid rgba(180,140,60,0.45);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    opacity: 0.92; cursor: zoom-in; transition: opacity .2s, transform .2s;
+  }
+  .sb-player:hover .sb-portrait { opacity: 1; transform: scale(1.04); }
+  /* Keep the name and the race/class line clear of the picture. */
+  .sb-player:has(.sb-portrait) .sb-name,
+  .sb-player:has(.sb-portrait) .sb-identity { padding-right: 58px; }
+  #portrait-viewer {
+    position: fixed; inset: 0; z-index: 9996; display: none;
+    background: rgba(0,0,0,0.78); align-items: center; justify-content: center;
+  }
+  #portrait-viewer.visible { display: flex; }
+  #portrait-viewer img {
+    max-width: 82vw; max-height: 86vh; border: 1px solid rgba(180,140,60,0.5);
+    border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  }
+
   /* ── Minimap ───────────────────────────────────────────────────────────
      A map pinned in the right column, under the settings rail. Click to open
      it full-screen; click again (or Esc) to put it back. Hidden on very short
@@ -5721,12 +5747,21 @@ function _buildPlayerCard(p, solo) {
   card.className = 'sb-player';
   card.dataset.playerName = p.name;
 
-  // Class icon (top-right corner)
-  const classIco = _classIconSrc(p.class);
-  if (classIco) {
-    const ico = document.createElement('img');
-    ico.src = classIco; ico.className = 'sb-class-icon'; ico.alt = '';
-    card.appendChild(ico);
+  // Portrait if the character has one, else the class glyph.
+  const portrait = (p.sheet && p.sheet.portrait) || p.portrait;
+  if (portrait) {
+    const pic = document.createElement('img');
+    pic.src = portrait; pic.className = 'sb-portrait'; pic.alt = p.name || '';
+    pic.title = p.name || '';
+    pic.dataset.portrait = portrait;
+    card.appendChild(pic);
+  } else {
+    const classIco = _classIconSrc(p.class);
+    if (classIco) {
+      const ico = document.createElement('img');
+      ico.src = classIco; ico.className = 'sb-class-icon'; ico.alt = '';
+      card.appendChild(ico);
+    }
   }
 
   // Name
@@ -6737,6 +6772,29 @@ async function _playSfx(name, force = false) {
 })();
 
 
+
+
+// ── Portrait viewer ────────────────────────────────────────────────────────
+// Click a party card's portrait to see the whole picture. Delegated, because
+// cards are rebuilt on every stats push and the viewer lives at the end of body.
+document.addEventListener('click', (e) => {
+  const pic = e.target.closest('.sb-portrait');
+  const viewer = document.getElementById('portrait-viewer');
+  if (!viewer) return;
+  if (pic) {
+    e.stopPropagation();          // don't also open the character sheet
+    viewer.querySelector('img').src = pic.dataset.portrait;
+    viewer.classList.add('visible');
+  } else if (e.target.closest('#portrait-viewer')) {
+    viewer.classList.remove('visible');
+  }
+}, true);
+document.addEventListener('keydown', (e) => {
+  const viewer = document.getElementById('portrait-viewer');
+  if (e.key === 'Escape' && viewer && viewer.classList.contains('visible')) {
+    viewer.classList.remove('visible');
+  }
+});
 
 // ── Minimap ────────────────────────────────────────────────────────────────
 // {"minimap": {"image": ..., "label": ...}} pins a map in the corner; an empty
@@ -8990,6 +9048,7 @@ function _initDicePad() {
   window._onDiceRequestCancelled = _onDiceRequestCancelled;
 }
 </script>
+<div id="portrait-viewer"><img alt=""></div>
 <div id="minimap-scrim"></div>
 <div id="minimap" title="Haritayı büyüt"><img alt="Harita"><div class="mm-label"></div></div>
 <div id="vfx-layer" aria-hidden="true"></div>
