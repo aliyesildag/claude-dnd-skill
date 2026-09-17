@@ -324,7 +324,10 @@
      open it full-screen; click again (or Esc) to put it back. Hidden on very
      short screens, where it would eat the transcript. */
   #minimap {
-    position: fixed; left: 14px; bottom: 14px; z-index: 9980;
+    /* Right column, directly under the settings rail. The rail's height
+       changes when it collapses or when Text Size changes, so --mm-top is
+       measured from JS rather than guessed. */
+    position: fixed; right: 28px; top: var(--mm-top, 480px); z-index: 9980;
     width: min(300px, 26vw); border: 1px solid rgba(180,140,60,0.45);
     border-radius: 4px; background: rgba(18,14,9,0.92);
     box-shadow: 0 6px 22px rgba(0,0,0,0.5); overflow: hidden; cursor: zoom-in;
@@ -338,7 +341,7 @@
     border-top: 1px solid rgba(180,140,60,0.25); background: rgba(0,0,0,0.35);
   }
   #minimap.expanded {
-    left: 50%; bottom: 50%; transform: translate(-50%, 50%);
+    right: auto; top: 50% !important; left: 50%; transform: translate(-50%, -50%);
     width: min(94vw, 1500px); cursor: zoom-out; z-index: 9995;
   }
   #minimap.expanded img { max-height: 84vh; width: auto; margin: 0 auto; }
@@ -6804,15 +6807,36 @@ function _applyMinimap() {
   const img = el.querySelector('img');
   const lab = el.querySelector('.mm-label');
   if (_minimapData && _minimapData.image && _minimapOn) {
-    if (img.getAttribute('src') !== _minimapData.image) img.src = _minimapData.image;
+    if (img.getAttribute('src') !== _minimapData.image) {
+      img.src = _minimapData.image;
+      img.onload = _placeMinimap;
+    }
     lab.textContent = _minimapData.label || '';
     lab.style.display = _minimapData.label ? '' : 'none';
     el.classList.add('visible');
+    _placeMinimap();
   } else {
     el.classList.remove('visible', 'expanded');
     document.getElementById('minimap-scrim').classList.remove('visible');
   }
 }
+
+// The settings rail collapses and its width changes with Text Size, so the
+// gap is measured rather than guessed.
+function _placeMinimap() {
+  const el = document.getElementById('minimap');
+  const rail = document.getElementById('audio-controls');
+  if (!el) return;
+  let top = 96;
+  if (rail && getComputedStyle(rail).display !== 'none') {
+    const r = rail.getBoundingClientRect();
+    if (r.height > 0) top = Math.round(r.bottom + 16);
+  }
+  // Never push it off the bottom of a short screen.
+  const maxTop = Math.max(96, window.innerHeight - el.offsetHeight - 16);
+  el.style.setProperty('--mm-top', Math.min(top, maxTop) + 'px');
+}
+window.addEventListener('resize', _placeMinimap);
 
 function setMinimap(data) {
   _minimapData = (data && data.image) ? data : null;
@@ -6894,6 +6918,10 @@ window.playVfx = playVfx;
     if (_vfxOn) playVfx('success');
   });
 })();
+
+document.getElementById('controls-toggle-row').addEventListener('click', () => {
+  setTimeout(_placeMinimap, 60);
+});
 
 document.getElementById('sfx-row').addEventListener('click', () => {
   _sfxOn = !_sfxOn;
