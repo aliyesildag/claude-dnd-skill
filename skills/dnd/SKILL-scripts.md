@@ -200,6 +200,16 @@ python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py \
   --factions '[{"name":"Pale Court","standing":"Allied"},{"name":"Watch","standing":"Neutral"}]'
 python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --factions '[]'   # clear all
 
+# Battle VFX — screen-level effects on every connected display. Dice lines sent
+# with --dice trigger these automatically (hit / miss / crit / fumble / success /
+# fail, plus fire / thunder / radiant / psychic / thorn / cold / lightning / acid /
+# poison / necrotic / silver by damage or spell keyword); HP drops and heals pushed
+# via --stat-hp fire "damage" / "heal". Use --vfx by hand for scene beats:
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --vfx fog      # fog rolling in (10 s)
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --vfx night    # night falling (6 s), also: dawn
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --vfx silver   # a silver cut, white sweep then dark bloom
+# --vfx can ride along with a narration send; alone it exits without reading stdin.
+
 # Combat turn order (on /dm:dnd combat start):
 python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --turn-order \
   '{"order":["Goblin 1","Flerb","Goblin 2"],"current":"Goblin 1","round":1}'

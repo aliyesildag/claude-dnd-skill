@@ -438,6 +438,11 @@ def main() -> None:
         help="Show a generated scene image above the narration. PROMPT must be "
              "ENGLISH regardless of the table's language — the model produces "
              "mush from non-English prompts.")
+    parser.add_argument("--vfx", metavar="NAME",
+        help="Play a battle effect on every screen: hit, miss, crit, fumble, success, fail, "
+             "fire, thunder, radiant, psychic, thorn, cold, lightning, acid, poison, necrotic, "
+             "damage, heal, fog, silver, night, dawn. Dice lines trigger these automatically; "
+             "use this for scene beats (fog rolling in, a silver cut, night falling).")
     parser.add_argument("--image-file", metavar="FILENAME",
         help="Show a pre-made scene image served from the campaign's scenes/ folder "
              "(display route /scenes/<FILENAME>). Overrides --image.")
@@ -609,6 +614,15 @@ def main() -> None:
                   or args.milestone_award or args.milestone_spend or args.xp_award
                   or args.verify)
         if not _other:
+            return
+
+    # ── Battle VFX ───────────────────────────────────────────────────────────
+    # Fire-and-forget; a bare --vfx exits here so it never blocks on stdin.
+    if args.vfx and args.vfx.strip():
+        _post(f"{BASE_URL}/vfx", json.dumps({"name": args.vfx.strip().lower()}).encode("utf-8"),
+              _read_token())
+        if not (args.player or args.npc or args.dice or args.tutor or args.action
+                or args.image or args.image_file or args.inspiration_award or args.xp_award):
             return
 
     _has_content_flag = bool(args.player or args.npc or args.dice or args.tutor or args.action)

@@ -1184,6 +1184,88 @@ def _broadcast(payload: dict) -> None:
             _client_chars.pop(q, None)
 
 
+# ─── Battle VFX ───────────────────────────────────────────────────────────────
+# Screen-level effects (flash, shake, vignette, fog) the browser plays over the
+# scene. Two sources: an explicit POST /vfx from send.py --vfx, and automatic
+# detection on every --dice line so a hit, a miss and a crit read differently on
+# screen without the DM doing anything. Effects are broadcast only, never
+# logged: a replay must not re-fire tonight's fireballs.
+
+_VFX_NAMES = {
+    "hit", "miss", "crit", "fumble", "success", "fail",
+    "fire", "thunder", "radiant", "psychic", "thorn", "cold", "lightning", "acid", "poison", "necrotic",
+    "damage", "heal", "fog", "silver", "night", "dawn",
+}
+
+# A VFX may carry a sound; names come from audio.py's synth set.
+_VFX_SFX = {
+    "fire": "fire", "thunder": "low_hum", "radiant": "magic", "psychic": "magic",
+    "thorn": "impact", "lightning": "low_hum", "cold": "breath", "acid": "magic",
+    "poison": "breath", "necrotic": "magic",
+    "hit": "impact", "crit": "sword", "damage": "thud", "silver": "sword",
+    "fog": "breath", "night": None, "dawn": None, "heal": None,
+    "miss": None, "fumble": "thud", "success": None, "fail": None,
+}
+
+_VFX_ELEMENT = [
+    (re.compile(r"fire ?bolt|produce flame|\bfire\b|\bateş\b|alev|yakt|yand", re.I), "fire"),
+    (re.compile(r"thunderwave|thunder|gök ?gürült", re.I), "thunder"),
+    (re.compile(r"starry wisp|radiant|sacred flame|guiding bolt|ışı[kğ]", re.I), "radiant"),
+    (re.compile(r"vicious mockery|psychic|dissonant", re.I), "psychic"),
+    (re.compile(r"thorn whip|entangle|diken|sarmaşık", re.I), "thorn"),
+    (re.compile(r"ray of frost|\bcold\b|frost|\bbuz\b|soğuk hasar", re.I), "cold"),
+    (re.compile(r"lightning|shocking grasp|yıldırım|şimşek", re.I), "lightning"),
+    (re.compile(r"acid|asit", re.I), "acid"),
+    (re.compile(r"poison|zehir", re.I), "poison"),
+    (re.compile(r"necrotic|nekrotik", re.I), "necrotic"),
+    (re.compile(r"healing word|cure wounds|\bheal|iyileş|şifa", re.I), "heal"),
+    (re.compile(r"gümüş|silver", re.I), "silver"),
+]
+_VFX_HIT   = re.compile(r"→\s*(vurdu|isabet|hit\b|başarılı|success)|\bhit!|\bvurdu\b", re.I)
+_VFX_MISS  = re.compile(r"→\s*(ıskaladı|miss|başarısız|fail)|\bmiss(ed)?\b|ıskala", re.I)
+_VFX_CRIT  = re.compile(r"doğal 20|natural 20|nat ?20|\bcrit|\[20\]", re.I)
+_VFX_FUMBLE= re.compile(r"doğal 1\b|natural 1\b|nat ?1\b|\[1\]", re.I)
+_VFX_ATTACK= re.compile(r"saldırı|attack|vs AC|AC \d", re.I)
+
+
+def _detect_dice_vfx(text: str) -> "str | None":
+    """Pick one effect for a dice line. Crit and fumble win, then the damage
+    element on a hit, then plain hit/miss for attacks, then a soft success or
+    fail glint for checks and saves. Text with no verdict gets nothing."""
+    t = text or ""
+    is_attack = bool(_VFX_ATTACK.search(t))
+    hit  = bool(_VFX_HIT.search(t))
+    miss = bool(_VFX_MISS.search(t))
+    if _VFX_CRIT.search(t) and hit:
+        return "crit"
+    if _VFX_FUMBLE.search(t) and (miss or not hit):
+        return "fumble"
+    if hit:
+        for rx, name in _VFX_ELEMENT:
+            if rx.search(t):
+                return name
+        return "hit" if is_attack else "success"
+    if miss:
+        return "miss" if is_attack else "fail"
+    return None
+
+
+@app.route("/vfx", methods=["POST"])
+def vfx_route():
+    """Explicit effect from send.py --vfx <name>. Broadcast only."""
+    if not _token_ok():
+        return "Forbidden", 403
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip().lower()[:24]
+    if name not in _VFX_NAMES:
+        return jsonify({"error": "unknown vfx", "known": sorted(_VFX_NAMES)}), 400
+    _broadcast({"vfx": name})
+    sfx = _VFX_SFX.get(name)
+    if sfx and _audio:
+        _broadcast({"sfx": sfx})
+    return "", 204
+
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1545,6 +1627,9 @@ def chunk():
         payload["npc"] = data["npc"]
     elif is_dice:
         payload["dice"] = True
+        _vfx = _detect_dice_vfx(cleaned)
+        if _vfx:
+            payload["vfx"] = _vfx
     elif is_tutor:
         payload["tutor"] = True
     else:
