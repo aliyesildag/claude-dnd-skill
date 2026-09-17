@@ -1563,7 +1563,6 @@ def chunk():
     is_npc         = bool(data.get("npc"))
     is_dice        = bool(data.get("dice"))
     is_tutor       = bool(data.get("tutor"))
-    is_map         = bool(data.get("map"))
     is_inspiration = bool(data.get("inspiration_award"))
     is_milestone_award = bool(data.get("milestone_award"))
     is_milestone_spend = bool(data.get("milestone_spend"))
@@ -1643,9 +1642,7 @@ def chunk():
 
     # Player/npc/dice/tutor/action text comes from send.py (no ANSI/chrome) — light clean only.
     # DM narration may come from wrapper.py — full clean.
-    # A map is pre-formatted ASCII: never reflow, never strip its leading spaces.
-    cleaned = raw.rstrip() if is_map else (
-        raw.strip() if (is_action or is_player or is_npc or is_dice or is_tutor) else _clean(raw))
+    cleaned = raw.strip() if (is_action or is_player or is_npc or is_dice or is_tutor) else _clean(raw)
     if not cleaned.strip():
         return "", 204
 
@@ -1662,13 +1659,8 @@ def chunk():
         _vfx = _detect_dice_vfx(cleaned)
         if _vfx:
             payload["vfx"] = _vfx
-    elif is_map:
-        payload["map"] = True
-        payload["label"] = str(data.get("label", "") or "")[:60]
     elif is_tutor:
         payload["tutor"] = True
-    elif is_map:
-        pass   # a diagram is not narration: no scene change, no ambience
     else:
         # Scene detection only on DM narration
         scene = _detect_scene(cleaned)
@@ -1690,9 +1682,6 @@ def chunk():
         log_entry["npc"] = data["npc"]
     elif is_dice:
         log_entry["dice"] = True
-    elif is_map:
-        log_entry["map"] = True
-        log_entry["label"] = str(data.get("label", "") or "")[:60]
     elif is_tutor:
         log_entry["tutor"] = True
 
