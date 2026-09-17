@@ -318,6 +318,39 @@
   :root[data-theme="light"] .map-block { background: rgba(245,238,222,0.75); }
   :root[data-theme="light"] .map-body  { color: #3a3226; }
 
+
+  /* ── Minimap ───────────────────────────────────────────────────────────
+     A map pinned bottom-left, over the party sidebar's lower edge. Click to
+     open it full-screen; click again (or Esc) to put it back. Hidden on very
+     short screens, where it would eat the transcript. */
+  #minimap {
+    position: fixed; left: 14px; bottom: 14px; z-index: 9980;
+    width: min(300px, 26vw); border: 1px solid rgba(180,140,60,0.45);
+    border-radius: 4px; background: rgba(18,14,9,0.92);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.5); overflow: hidden; cursor: zoom-in;
+    display: none; transition: opacity .2s ease;
+  }
+  #minimap.visible { display: block; }
+  #minimap img { display: block; width: 100%; height: auto; }
+  #minimap .mm-label {
+    padding: .25em .5em; font-size: calc(10px * var(--ui-scale, 1));
+    letter-spacing: .08em; text-transform: uppercase; color: #c9a84c;
+    border-top: 1px solid rgba(180,140,60,0.25); background: rgba(0,0,0,0.35);
+  }
+  #minimap.expanded {
+    left: 50%; bottom: 50%; transform: translate(-50%, 50%);
+    width: min(94vw, 1500px); cursor: zoom-out; z-index: 9995;
+  }
+  #minimap.expanded img { max-height: 84vh; width: auto; margin: 0 auto; }
+  #minimap-scrim {
+    position: fixed; inset: 0; z-index: 9994; background: rgba(0,0,0,0.72);
+    display: none;
+  }
+  #minimap-scrim.visible { display: block; }
+  @media (max-height: 620px), (max-width: 560px) {
+    #minimap:not(.expanded) { display: none !important; }
+  }
+
   /* ── Text content ── */
   #text-content {
     /* The measure grows with the reading size: at 150% a fixed 820px column
@@ -3847,6 +3880,10 @@
     <span class="audio-label">Sound Effects</span>
     <div class="toggle-track" id="sfx-track"><div class="toggle-thumb"></div></div>
   </div>
+  <div class="audio-row" id="minimap-row" title="Pinned map in the corner — click the map to enlarge it">
+    <span class="audio-label">Harita</span>
+    <div class="toggle-track on" id="minimap-track"><div class="toggle-thumb"></div></div>
+  </div>
   <div class="audio-row" id="vfx-row" title="Battle effects on this screen — flashes, shakes and fog from dice results and scene beats">
     <span class="audio-label">Battle FX</span>
     <div class="toggle-track on" id="vfx-track"><div class="toggle-thumb"></div></div>
@@ -6752,6 +6789,66 @@ async function _playSfx(name, force = false) {
 })();
 
 
+
+// ── Minimap ────────────────────────────────────────────────────────────────
+// {"minimap": {"image": ..., "label": ...}} pins a map in the corner; an empty
+// object clears it. Sticky on the server, so a refresh keeps it. Click to
+// expand over the page, click or Esc to shrink. Per-browser show/hide toggle.
+let _minimapOn = true;
+try { _minimapOn = localStorage.getItem('dnd-minimap') !== '0'; } catch (_) {}
+let _minimapData = null;
+
+function _applyMinimap() {
+  const el = document.getElementById('minimap');
+  if (!el) return;
+  const img = el.querySelector('img');
+  const lab = el.querySelector('.mm-label');
+  if (_minimapData && _minimapData.image && _minimapOn) {
+    if (img.getAttribute('src') !== _minimapData.image) img.src = _minimapData.image;
+    lab.textContent = _minimapData.label || '';
+    lab.style.display = _minimapData.label ? '' : 'none';
+    el.classList.add('visible');
+  } else {
+    el.classList.remove('visible', 'expanded');
+    document.getElementById('minimap-scrim').classList.remove('visible');
+  }
+}
+
+function setMinimap(data) {
+  _minimapData = (data && data.image) ? data : null;
+  _applyMinimap();
+}
+
+(function _initMinimap() {
+  // #minimap sits at the end of <body>, after this script, so bind on the
+  // document and resolve the element when the click actually happens.
+  const toggleExpand = () => {
+    const el = document.getElementById('minimap');
+    const scrim = document.getElementById('minimap-scrim');
+    if (!el || !scrim) return;
+    const on = el.classList.toggle('expanded');
+    scrim.classList.toggle('visible', on);
+  };
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#minimap') || e.target.closest('#minimap-scrim')) toggleExpand();
+  });
+  document.addEventListener('keydown', (e) => {
+    const el = document.getElementById('minimap');
+    if (e.key === 'Escape' && el && el.classList.contains('expanded')) toggleExpand();
+  });
+  const row = document.getElementById('minimap-row');
+  const track = document.getElementById('minimap-track');
+  if (row && track) {
+    _setTrack(track, _minimapOn);
+    row.addEventListener('click', () => {
+      _minimapOn = !_minimapOn;
+      _setTrack(track, _minimapOn);
+      try { localStorage.setItem('dnd-minimap', _minimapOn ? '1' : '0'); } catch (_) {}
+      _applyMinimap();
+    });
+  }
+})();
+
 // ── Battle VFX ───────────────────────────────────────────────────────
 // {"vfx": name} arrives from the server (auto on dice lines, or explicit
 // send.py --vfx). One overlay element per effect, removed when its animation
@@ -8106,6 +8203,9 @@ function connect() {
     if (payload.scene) {
       applyScene(payload.scene);
     }
+    if (payload.minimap !== undefined) {
+      setMinimap(payload.minimap);
+    }
     if (payload.map && payload.text) {
       renderMapBlock(payload.text, payload.label, false);
       return;
@@ -8921,6 +9021,8 @@ function _initDicePad() {
   window._onDiceRequestCancelled = _onDiceRequestCancelled;
 }
 </script>
+<div id="minimap-scrim"></div>
+<div id="minimap" title="Haritayı büyüt"><img alt="Harita"><div class="mm-label"></div></div>
 <div id="vfx-layer" aria-hidden="true"></div>
 </body>
 </html>

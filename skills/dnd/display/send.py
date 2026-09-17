@@ -441,6 +441,12 @@ def main() -> None:
         help="Show a generated scene image above the narration. PROMPT must be "
              "ENGLISH regardless of the table's language — the model produces "
              "mush from non-English prompts.")
+    parser.add_argument("--minimap", metavar="FILENAME", dest="minimap",
+        help="Pin a map from the campaign's scenes/ folder to the corner of every "
+             "screen (e.g. 49b-bolge-haritasi.jpg). Stays until changed. "
+             "Use --label to name it, and --minimap-clear to remove it.")
+    parser.add_argument("--minimap-clear", action="store_true", dest="minimap_clear",
+        help="Remove the pinned corner map.")
     parser.add_argument("--map", metavar="FILE", dest="map_file",
         help="Send an ASCII map (campaign/haritalar/<file>.txt or a path) as a "
              "monospace block. Use --label to title it.")
@@ -620,6 +626,18 @@ def main() -> None:
                   or args.milestone_award or args.milestone_spend or args.xp_award
                   or args.verify)
         if not _other:
+            return
+
+    # ── Pinned corner map ────────────────────────────────────────────────────
+    if getattr(args, "minimap", None) or getattr(args, "minimap_clear", False):
+        _img = ""
+        if not args.minimap_clear and args.minimap:
+            _img = "/scenes/" + urllib.parse.quote(args.minimap.strip())
+        _post(f"{BASE_URL}/minimap", json.dumps({
+            "image": _img, "label": (args.label or ""),
+        }).encode("utf-8"), _read_token())
+        if not (args.player or args.npc or args.dice or args.tutor or args.action
+                or args.vfx or args.image or args.image_file or args.map_file):
             return
 
     # ── ASCII map ────────────────────────────────────────────────────────────

@@ -200,6 +200,12 @@ python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py \
   --factions '[{"name":"Pale Court","standing":"Allied"},{"name":"Watch","standing":"Neutral"}]'
 python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --factions '[]'   # clear all
 
+# Pinned corner map (minimap) — stays on every screen until changed, survives a
+# refresh, click enlarges it. Image must already be in the campaign's scenes/.
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --minimap 49b-bolge-haritasi.jpg --label "Kavran ve çevresi"
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --minimap 51-sur-dibi.jpg --label "Sur dibi"   # swap for a fight
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --minimap-clear
+
 # ASCII map — sends campaign/haritalar/<name>.txt as a monospace block on every
 # screen. Spacing is preserved; the block scrolls sideways rather than wrapping.
 python3 ${CLAUDE_SKILL_DIR}/display/send.py --map bolge --label "Bölge ve mesafeler"

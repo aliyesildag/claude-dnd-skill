@@ -1184,6 +1184,35 @@ def _broadcast(payload: dict) -> None:
             _client_chars.pop(q, None)
 
 
+# ─── Minimap ──────────────────────────────────────────────────────────────────
+# A map pinned in the corner of every screen, so "where are we, how far is it"
+# is answered by looking rather than by asking. Sticky: stored here and replayed
+# in the on-connect burst, because a map that vanishes on refresh is not a map.
+
+_minimap: dict = {}
+_minimap_lock = threading.Lock()
+
+
+@app.route("/minimap", methods=["POST"])
+def minimap_route():
+    """Set or clear the pinned map. Body: {"image": "/scenes/x.jpg", "label": "..."}
+    An empty or missing image clears it."""
+    if not _token_ok():
+        return "Forbidden", 403
+    data = request.get_json(silent=True) or {}
+    img = str(data.get("image", "") or "").strip()[:300]
+    label = str(data.get("label", "") or "").strip()[:60]
+    if img and not img.startswith("/scenes/"):
+        return jsonify({"error": "image must be a /scenes/ path"}), 400
+    with _minimap_lock:
+        _minimap.clear()
+        if img:
+            _minimap.update({"image": img, "label": label})
+        payload = dict(_minimap)
+    _broadcast({"minimap": payload})
+    return "", 204
+
+
 # ─── Battle VFX ───────────────────────────────────────────────────────────────
 # Screen-level effects (flash, shake, vignette, fog) the browser plays over the
 # scene. Two sources: an explicit POST /vfx from send.py --vfx, and automatic
@@ -2919,6 +2948,11 @@ def _initial_payloads(emit) -> None:
         recent = list(_text_log)[-200:]
     if recent:
         _emit({"replay_batch": recent})
+
+    # Send the pinned map so a late joiner or a refresh keeps it on screen.
+    with _minimap_lock:
+        if _minimap:
+            _emit({"minimap": dict(_minimap)})
 
     # Send current stats so the sidebar is populated immediately on (re)connect.
     with _stats_lock:
