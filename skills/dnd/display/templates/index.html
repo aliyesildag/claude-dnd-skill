@@ -295,6 +295,42 @@
   }
 
 
+
+  /* ── Minimap ───────────────────────────────────────────────────────────
+     A map pinned in the right column, under the settings rail. Click to open
+     it full-screen; click again (or Esc) to put it back. Hidden on very short
+     or narrow screens, where it would eat the transcript. */
+  #minimap {
+    /* Right column, directly under the settings rail. The rail's height
+       changes when it collapses or when Text Size changes, so --mm-top is
+       measured from JS rather than guessed. */
+    position: fixed; right: 28px; top: var(--mm-top, 480px); z-index: 9980;
+    width: min(300px, 26vw); border: 1px solid rgba(180,140,60,0.45);
+    border-radius: 4px; background: rgba(18,14,9,0.92);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.5); overflow: hidden; cursor: zoom-in;
+    display: none; transition: opacity .2s ease;
+  }
+  #minimap.visible { display: block; }
+  #minimap img { display: block; width: 100%; height: auto; }
+  #minimap .mm-label {
+    padding: .25em .5em; font-size: calc(10px * var(--ui-scale, 1));
+    letter-spacing: .08em; text-transform: uppercase; color: #c9a84c;
+    border-top: 1px solid rgba(180,140,60,0.25); background: rgba(0,0,0,0.35);
+  }
+  #minimap.expanded {
+    right: auto; top: 50% !important; left: 50%; transform: translate(-50%, -50%);
+    width: min(94vw, 1500px); cursor: zoom-out; z-index: 9995;
+  }
+  #minimap.expanded img { max-height: 84vh; width: auto; margin: 0 auto; }
+  #minimap-scrim {
+    position: fixed; inset: 0; z-index: 9994; background: rgba(0,0,0,0.72);
+    display: none;
+  }
+  #minimap-scrim.visible { display: block; }
+  @media (max-height: 620px), (max-width: 560px) {
+    #minimap:not(.expanded) { display: none !important; }
+  }
+
   /* ── Text content ── */
   #text-content {
     /* The measure grows with the reading size: at 150% a fixed 820px column
