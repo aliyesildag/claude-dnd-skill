@@ -200,6 +200,12 @@ python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py \
   --factions '[{"name":"Pale Court","standing":"Allied"},{"name":"Watch","standing":"Neutral"}]'
 python3 ${CLAUDE_SKILL_DIR}/display/push_stats.py --factions '[]'   # clear all
 
+# ASCII map — sends campaign/haritalar/<name>.txt as a monospace block on every
+# screen. Spacing is preserved; the block scrolls sideways rather than wrapping.
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --map bolge --label "Bölge ve mesafeler"
+python3 ${CLAUDE_SKILL_DIR}/display/send.py --map kavran --label "Kavran"
+# Alone it exits without reading stdin; --label titles the block.
+
 # Battle VFX — screen-level effects on every connected display. Dice lines sent
 # with --dice trigger these automatically (hit / miss / crit / fumble / success /
 # fail, plus fire / thunder / radiant / psychic / thorn / cold / lightning / acid /

@@ -294,6 +294,30 @@
     body.vfx-shake, body.vfx-shake-hard { animation: none; }
   }
 
+
+  /* ── Map block (ASCII diagrams) ────────────────────────────────────────
+     Pre-formatted text: never reflow, never justify. Scrolls sideways on a
+     phone rather than wrapping, because a wrapped map is not a map. */
+  .map-block {
+    margin: 1.1em auto; max-width: min(calc(46em * var(--text-scale, 1)), 100%);
+    border: 1px solid rgba(180,140,60,0.35); border-radius: 4px;
+    background: rgba(20,16,10,0.35); overflow: hidden;
+  }
+  .map-header {
+    display: flex; align-items: center; gap: .5em;
+    padding: .4em .7em; border-bottom: 1px solid rgba(180,140,60,0.22);
+    font-size: calc(12px * var(--ui-scale, 1)); letter-spacing: .08em;
+    text-transform: uppercase; color: #c9a84c; opacity: .9;
+  }
+  .map-body {
+    margin: 0; padding: .7em .8em; overflow-x: auto; overflow-y: hidden;
+    font-family: ui-monospace, "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+    font-size: calc(11.5px * var(--text-scale, 1)); line-height: 1.32;
+    white-space: pre; tab-size: 4; color: #d8cdb4;
+  }
+  :root[data-theme="light"] .map-block { background: rgba(245,238,222,0.75); }
+  :root[data-theme="light"] .map-body  { color: #3a3226; }
+
   /* ── Text content ── */
   #text-content {
     /* The measure grows with the reading size: at 150% a fixed 820px column
@@ -5356,6 +5380,35 @@ function _renderTutorBlockNow(text, isReplay) {
   _dmHelpReset();
 }
 
+
+// ── Map block ──────────────────────────────────────────────────────────────
+// ASCII maps arrive as {"map": true, "text": ..., "label": ...}. Rendered in
+// a <pre> so spacing survives; no typewriter, a map should land at once.
+function renderMapBlock(text, label, isReplay) {
+  _deferBlock(() => _renderMapBlockNow(text, label, isReplay), isReplay);
+}
+
+function _renderMapBlockNow(text, label, isReplay) {
+  _flushForBlock();
+  const block = document.createElement('div');
+  block.className = 'map-block';
+  if (isReplay) block.style.opacity = '0.65';
+
+  const header = document.createElement('div');
+  header.className = 'map-header';
+  header.innerHTML = '<span>⌖</span><span class="map-label"></span>';
+  header.querySelector('.map-label').textContent = label || 'Harita';
+  block.appendChild(header);
+
+  const body = document.createElement('pre');
+  body.className = 'map-body';
+  body.textContent = String(text || '').replace(/\r/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  block.appendChild(body);
+
+  textContent.appendChild(block);
+  _reanchorCursor();
+}
+
 // ── Scene image block ──────────────────────────────────────────────────────
 // The URL points at the generator; the browser fetches it directly so the
 // narration renders immediately and the picture fills in behind it.
@@ -5501,6 +5554,10 @@ function renderReplayBatch(items) {
     }
     if (item.scene_image) {
       renderSceneImage(item.scene_image, item.prompt || '', true);
+      return;
+    }
+    if (item.map && item.text) {
+      renderMapBlock(item.text, item.label, true);
       return;
     }
     if (!item.text) return;
@@ -8048,6 +8105,10 @@ function connect() {
     }
     if (payload.scene) {
       applyScene(payload.scene);
+    }
+    if (payload.map && payload.text) {
+      renderMapBlock(payload.text, payload.label, false);
+      return;
     }
     if (payload.vfx) {
       playVfx(payload.vfx);

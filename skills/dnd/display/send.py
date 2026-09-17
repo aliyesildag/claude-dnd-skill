@@ -85,6 +85,9 @@ from runtime_paths import rt          # writable runtime dir (update-safe)
 _SCHEME_FILE = os.path.join(_DISPLAY_DIR, ".scheme")   # launch marker → code dir
 _SCHEME = open(_SCHEME_FILE, encoding="utf-8").read().strip() if os.path.exists(_SCHEME_FILE) else "http"
 BASE_URL    = f"{_SCHEME}://localhost:5001"
+# ASCII maps live with the campaign's other hand-made assets.
+_MAP_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "..", "..", "..", "campaign", "haritalar")
 FLASK_URL   = f"{BASE_URL}/chunk"
 STATS_URL   = f"{BASE_URL}/stats"
 HEALTH_URL  = f"{BASE_URL}/health"
@@ -438,6 +441,9 @@ def main() -> None:
         help="Show a generated scene image above the narration. PROMPT must be "
              "ENGLISH regardless of the table's language — the model produces "
              "mush from non-English prompts.")
+    parser.add_argument("--map", metavar="FILE", dest="map_file",
+        help="Send an ASCII map (campaign/haritalar/<file>.txt or a path) as a "
+             "monospace block. Use --label to title it.")
     parser.add_argument("--vfx", metavar="NAME",
         help="Play a battle effect on every screen: hit, miss, crit, fumble, success, fail, "
              "fire, thunder, radiant, psychic, thorn, cold, lightning, acid, poison, necrotic, "
@@ -614,6 +620,27 @@ def main() -> None:
                   or args.milestone_award or args.milestone_spend or args.xp_award
                   or args.verify)
         if not _other:
+            return
+
+    # ── ASCII map ────────────────────────────────────────────────────────────
+    # Sent as its own typed block so the browser renders it in monospace with
+    # its spacing intact. Read from disk, never from stdin.
+    if getattr(args, "map_file", None):
+        _name = args.map_file.strip()
+        _cands = [_name, _name + ".txt",
+                  os.path.join(_MAP_DIR, _name), os.path.join(_MAP_DIR, _name + ".txt")]
+        _path = next((c for c in _cands if os.path.isfile(c)), None)
+        if not _path:
+            print(f"send.py: map not found: {_name} (looked in {_MAP_DIR})", file=sys.stderr)
+            sys.exit(2)
+        with open(_path, encoding="utf-8") as _f:
+            _body = _f.read()
+        _post(FLASK_URL, json.dumps({
+            "map": True, "text": _body,
+            "label": (args.label or os.path.splitext(os.path.basename(_path))[0]),
+        }).encode("utf-8"), _read_token())
+        if not (args.player or args.npc or args.dice or args.tutor or args.action
+                or args.vfx or args.image or args.image_file):
             return
 
     # ── Battle VFX ───────────────────────────────────────────────────────────
