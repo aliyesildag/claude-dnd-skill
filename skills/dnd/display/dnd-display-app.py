@@ -1173,11 +1173,31 @@ def _persist_input_queue() -> None:
 _load_input_queue()
 
 
+def _visible_to(payload: dict, char: str) -> bool:
+    """Is this payload visible to a viewer bound to `char`?
+
+    A payload with no "to" is public. A payload addressed to someone is seen by
+    that player and by the DM screen (which binds no character); everyone else
+    never receives it. The check is the only thing standing between a private
+    line and the whole table, so it fails closed: an unrecognised viewer with a
+    bound name that does not match sees nothing.
+    """
+    target = (payload.get("to") or "").strip().lower()
+    if not target:
+        return True
+    viewer = (char or "").strip().lower()
+    if not viewer:
+        return True          # DM screen — binds no character, sees everything
+    return viewer == target
+
+
 def _broadcast(payload: dict) -> None:
     _record_broadcast(payload)
     with _clients_lock:
         dead = []
         for q in _clients:
+            if not _visible_to(payload, _client_chars.get(q, "")):
+                continue
             try:
                 q.put_nowait(payload)
             except queue.Full:
@@ -1432,7 +1452,8 @@ def snapshot():
     if not _token_ok():
         return "Forbidden", 403
     events: list[dict] = []
-    _initial_payloads(events.append)
+    _initial_payloads(events.append,
+                      request.args.get("character") or request.args.get("char") or "")
     with _journal_lock:
         current = _broadcast_seq
     return jsonify({"seq": current, "events": events})
@@ -1460,6 +1481,8 @@ def tail_since():
         # "everything after N" filter is right even at N=0 (a fresh server,
         # where dropping n=1 would silently lose the first event).
         events = [p for (n, p) in _broadcast_journal if n > since]
+    _viewer = request.args.get("character") or request.args.get("char") or ""
+    events = [p for p in events if _visible_to(p, _viewer)]
     return jsonify({"seq": current, "events": events})
 
 
@@ -1679,6 +1702,13 @@ def chunk():
 
     payload: dict = {"text": cleaned}
 
+    # Private narration: addressed to one bound character. Delivery is filtered
+    # in _broadcast / _tail / the on-connect replay, so the rest of the table
+    # never receives the bytes at all.
+    private_to = str(data.get("to") or "").strip()[:48]
+    if private_to:
+        payload["to"] = private_to
+
     if is_action:
         payload["action"] = data["action"]
     elif is_player:
@@ -1714,6 +1744,8 @@ def chunk():
 
     # Store full typed payload so replay preserves action/player/npc/dice/tutor context
     log_entry: dict = {"text": cleaned}
+    if private_to:
+        log_entry["to"] = private_to
     if speaker:
         log_entry["speaker"] = speaker
     if tone:
@@ -3075,7 +3107,7 @@ def drain_player_input():
     return jsonify(drained), 200
 
 
-def _initial_payloads(emit) -> None:
+def _initial_payloads(emit, char: str = "") -> None:
     """Push the on-connect snapshot (scene, replay, stats, pending rolls, …).
 
     Shared by the SSE stream and the /snapshot polling fallback: a client that
@@ -3094,6 +3126,7 @@ def _initial_payloads(emit) -> None:
     # log, so a late joiner isn't shown sessions 1..N rendered at them.
     with _text_log_lock:
         recent = list(_text_log)[-200:]
+    recent = [e for e in recent if _visible_to(e, char)]
     if recent:
         _emit({"replay_batch": recent})
 
@@ -3173,7 +3206,7 @@ def stream():
         if _ch:
             _client_chars[q] = _ch
 
-    _initial_payloads(q.put_nowait)
+    _initial_payloads(q.put_nowait, _ch)
 
     def generate():
         try:

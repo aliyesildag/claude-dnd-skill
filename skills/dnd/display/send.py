@@ -483,6 +483,12 @@ def main() -> None:
              "voice. Name must match the campaign's ses-haritasi.json key.",
     )
     parser.add_argument(
+        "--to", metavar="NAME",
+        help="Private block: only the browser bound to this character (and the "
+             "DM screen) receives it. The rest of the table never gets the "
+             "bytes. Name must match the ?char= value that player opened.",
+    )
+    parser.add_argument(
         "--dice", action="store_true",
         help="Send as a dice result (inline gold styling)",
     )
@@ -606,11 +612,14 @@ def main() -> None:
         cast = _cast_names()
         problems += [e for e in (_check_name("--npc", args.npc or "", cast),
                                  _check_name("--speaker", args.speaker or "", cast)) if e]
-    if args.character:
+    if args.character or args.to:
         party = set((_get_json(PARTY_URL) or {}).get("players") or [])
-        e = _check_name("--character", args.character, party)
-        if e:
-            problems.append(e)
+        for flag, value in (("--character", args.character), ("--to", args.to)):
+            if not value:
+                continue
+            e = _check_name(flag, value, party)
+            if e:
+                problems.append(e)
     if problems:
         for e in problems:
             print(f"send.py: {e}", file=sys.stderr)
@@ -852,6 +861,10 @@ def main() -> None:
                 payload["speaker"] = args.speaker
             if args.tone:
                 payload["tone"] = args.tone
+            # Private delivery is orthogonal to the block type: a whisper can be
+            # narration, an NPC line or a tutor note.
+            if args.to:
+                payload["to"] = args.to
 
             issues = _validate_payload(payload, "chunk")
             if issues:

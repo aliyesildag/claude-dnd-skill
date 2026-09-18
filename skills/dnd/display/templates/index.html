@@ -405,6 +405,22 @@
 
   .dm-block, .npc-block, .dice-block, .tutor-block { position: relative; }
 
+  /* Private block — addressed to one player. The server never sends it to the
+     others, so this styling is a reminder to the reader, not a lock. */
+  .private-block {
+    border-left: 2px solid rgba(150, 110, 200, 0.55);
+    padding-left: 14px;
+    background: linear-gradient(90deg, rgba(120, 85, 170, 0.10), transparent 60%);
+  }
+  .private-tag {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(175, 140, 220, 0.85);
+    margin-bottom: 4px;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .block-badge { transition: none; }
   }
@@ -3922,7 +3938,7 @@
   </div>
   <div class="audio-row" id="speed-row" title="Typing speed — click to cycle">
     <span class="audio-label">Type Speed</span>
-    <span id="speed-label" class="speed-label">Normal</span>
+    <span id="speed-label" class="speed-label">Instant</span>
   </div>
   <div class="audio-row" id="theme-row" title="Display theme — Dark / Light / Auto (system)">
     <span class="audio-label">Theme</span>
@@ -4874,13 +4890,30 @@ if (_newPill) {
   });
 }
 
-let charDelay = 36;      // ms per character while typing (mutable — see speed toggle)
+let charDelay = 0;       // ms per character while typing (0 = Instant, table default; see speed toggle)
 const IDLE_GAP   = 1800; // ms silence before starting a new block
 
 // Who speaks the quoted lines in the narration now streaming in. Set from the
 // payload as it arrives and pinned to the block, because narration is typed out
 // character by character and the element outlives the message that started it.
 let _pendingSpeaker = '';
+// Set from the payload just before a block renders: the character this block
+// was addressed to, or '' for a public block.
+let _pendingPrivate = '';
+
+// Mark the most recently appended block as private. Used for the render*
+// helpers that build their own element instead of going through
+// getOrCreateBlock(), so the tag lands on whatever was just added.
+function markPrivate(name) {
+  if (!name) return;
+  const el = textContent.lastElementChild;
+  if (!el || el.classList.contains('private-block')) return;
+  el.classList.add('private-block');
+  const tag = document.createElement('span');
+  tag.className = 'private-tag';
+  tag.textContent = 'sadece ' + name;
+  el.insertBefore(tag, el.firstChild);
+}
 let _pendingTone = '';
 
 function getOrCreateBlock() {
@@ -4893,6 +4926,13 @@ function getOrCreateBlock() {
     scrollToBottom();
   }
   if (_pendingSpeaker) currentEl.dataset.speaker = _pendingSpeaker;
+  if (_pendingPrivate && !currentEl.classList.contains('private-block')) {
+    currentEl.classList.add('private-block');
+    const tag = document.createElement('span');
+    tag.className = 'private-tag';
+    tag.textContent = 'sadece ' + _pendingPrivate;
+    currentEl.insertBefore(tag, currentEl.firstChild);
+  }
   if (_pendingTone) currentEl.dataset.tone = _pendingTone;
   return currentEl.querySelector('p:last-child');
 }
@@ -5597,20 +5637,31 @@ function renderReplayBatch(items) {
     if (!item.text) return;
     if (item.action) {
       renderActionBlock(item.action, item.text, true);
+      markPrivate(item.to);
     } else if (item.player) {
       renderPlayerBlock(item.player, item.text, true);
+      markPrivate(item.to);
     } else if (item.npc) {
       renderNPCBlock(item.npc, item.text, true);
+      markPrivate(item.to);
     } else if (item.dice) {
       renderDiceBlock(item.text, true);
+      markPrivate(item.to);
     } else if (item.tutor) {
       renderTutorBlock(item.text, true);
+      markPrivate(item.to);
     } else {
       const block = document.createElement('div');
-      block.className = 'dm-block';
+      block.className = 'dm-block' + (item.to ? ' private-block' : '');
       block.style.opacity = '0.75';
       if (item.speaker) block.dataset.speaker = item.speaker;
       if (item.tone) block.dataset.tone = item.tone;
+      if (item.to) {
+        const tag = document.createElement('span');
+        tag.className = 'private-tag';
+        tag.textContent = 'sadece ' + item.to;
+        block.appendChild(tag);
+      }
       item.text.split('\n').forEach(line => {
         const p = document.createElement('p');
         _appendInlineSegments(p, _mdParse(line));
@@ -6969,7 +7020,7 @@ const _speedSteps = [
   { label: 'Fast',    ms: 18 },
   { label: 'Instant', ms: 0  },
 ];
-let _speedIdx = 0;
+let _speedIdx = 2;
 const _speedLabel = document.getElementById('speed-label');
 document.getElementById('speed-row').addEventListener('click', () => {
   _speedIdx = (_speedIdx + 1) % _speedSteps.length;
@@ -8275,16 +8326,22 @@ function connect() {
     if (payload.text && !payload.inspiration_award && !payload.milestone_award && !payload.milestone_spend && !payload.xp_award) {
       _pendingSpeaker = payload.speaker || '';
       _pendingTone = payload.tone || '';
+      _pendingPrivate = payload.to || '';
       if (payload.action) {
         renderActionBlock(payload.action, payload.text);
+        markPrivate(_pendingPrivate);
       } else if (payload.player) {
         renderPlayerBlock(payload.player, payload.text);
+        markPrivate(_pendingPrivate);
       } else if (payload.npc) {
         renderNPCBlock(payload.npc, payload.text);
+        markPrivate(_pendingPrivate);
       } else if (payload.dice) {
         renderDiceBlock(payload.text);
+        markPrivate(_pendingPrivate);
       } else if (payload.tutor) {
         renderTutorBlock(payload.text);
+        markPrivate(_pendingPrivate);
       } else {
         handleIncomingText(payload.text);
       }
