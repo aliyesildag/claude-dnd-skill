@@ -62,6 +62,8 @@ Usage:
 """
 
 import sys
+from pathlib import Path
+import difflib
 import json
 import argparse
 import os
@@ -88,6 +90,7 @@ BASE_URL    = f"{_SCHEME}://localhost:5001"
 FLASK_URL   = f"{BASE_URL}/chunk"
 STATS_URL   = f"{BASE_URL}/stats"
 HEALTH_URL  = f"{BASE_URL}/health"
+PARTY_URL   = f"{BASE_URL}/party"
 DICE_REQ_URL = f"{BASE_URL}/dice-request"
 TOKEN_FILE  = rt(".token")
 
@@ -213,6 +216,52 @@ def _validate_payload(payload: dict, endpoint: str) -> "list[str]":
         if "players" in payload and not isinstance(payload["players"], list):
             issues.append("stats payload 'players' is not a list")
     return issues
+
+
+def _get_json(url: str) -> "dict | None":
+    """GET and decode, or None. Quiet: callers treat this as best effort."""
+    headers = {}
+    token = _read_token()
+    if token:
+        headers["X-DND-Token"] = token
+    try:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        resp = urllib.request.urlopen(req, timeout=TIMEOUT, context=_SSL_CTX)
+        return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _cast_names() -> set:
+    """Speaker names the active campaign has cast, or an empty set."""
+    health = _get_json(HEALTH_URL) or {}
+    campaign = (health.get("campaign") or "").strip()
+    if not campaign:
+        return set()
+    root = os.environ.get("DND_CAMPAIGN_ROOT", "").strip() or "~/.claude/dnd"
+    path = (Path(root).expanduser() / "campaigns" / campaign / "ses-haritasi.json")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    return {k for k, v in data.items() if not k.startswith("_") and isinstance(v, dict)}
+
+
+def _check_name(kind: str, name: str, known: set) -> "str | None":
+    """Return an error line if `name` is not one the display knows.
+
+    Silent when the set is empty: the campaign may have no cast, the display may
+    be down, and neither is a reason to refuse to send. This check exists to
+    catch a typo, not to gate the table.
+    """
+    if not name or not known or name in known:
+        return None
+    near = difflib.get_close_matches(name, sorted(known), n=3, cutoff=0.6)
+    hint = f"  did you mean: {', '.join(near)}" if near else \
+           f"  known: {', '.join(sorted(known)[:8])}{' …' if len(known) > 8 else ''}"
+    return f"{kind} {name!r} is not one the display knows.\n{hint}"
 
 
 def _verify_health() -> "dict | None":
@@ -547,6 +596,25 @@ def main() -> None:
              "Surfaces a clear stderr line on mismatch — use during dev/debug.")
 
     args = parser.parse_args()
+
+    # Pre-flight the names. A miscast --npc/--speaker falls back to the narrator
+    # without a word, and a --character nobody is bound to leaves a dice request
+    # hanging on nobody's screen. Both are silent at the table, so they are
+    # caught here instead.
+    problems = []
+    if args.npc or args.speaker:
+        cast = _cast_names()
+        problems += [e for e in (_check_name("--npc", args.npc or "", cast),
+                                 _check_name("--speaker", args.speaker or "", cast)) if e]
+    if args.character:
+        party = set((_get_json(PARTY_URL) or {}).get("players") or [])
+        e = _check_name("--character", args.character, party)
+        if e:
+            problems.append(e)
+    if problems:
+        for e in problems:
+            print(f"send.py: {e}", file=sys.stderr)
+        sys.exit(2)
 
     # Two categories of flags drive whether to read stdin:
     #   1. Content flags (--player/--npc/--dice/--tutor/--action): body REQUIRED.

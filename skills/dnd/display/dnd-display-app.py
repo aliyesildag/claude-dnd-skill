@@ -1748,6 +1748,21 @@ def chunk():
     return "", 204
 
 
+@app.route("/party")
+def party():
+    """Names the display currently knows, so a sender can check before sending.
+
+    A dice request addressed to a name nobody is bound to does not fail, it
+    hangs: the request sits on a screen that never shows it. Checking first is
+    the only way that turns into an error the DM can see.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    with _stats_lock:
+        names = [p.get("name", "") for p in _current_stats.get("players", [])]
+    return jsonify({"players": [n for n in names if n]}), 200
+
+
 @app.route("/stats", methods=["POST"])
 def stats():
     """Receive character/combat stat updates. Merges players by name, replaces turn_order.
