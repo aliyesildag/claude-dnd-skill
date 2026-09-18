@@ -7052,7 +7052,19 @@ function _ttsExtractText(blockEl) {
   const clone = blockEl.cloneNode(true);
   const bar = clone.querySelector('.tts-bar');
   if (bar) bar.remove();
+  // The speaker's name is a heading, not a spoken line. It used to be read out
+  // ahead of the dialogue; now that each NPC has their own voice, hearing the
+  // name announced is both redundant and a step out of the scene.
+  const nameEl = clone.querySelector('.npc-name');
+  if (nameEl) nameEl.remove();
   return (clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+}
+
+// The speaker name the server matches against the campaign's cast. Empty for a
+// DM block, which keeps the narrator voice chosen in the dropdown.
+function _ttsSpeaker(blockEl) {
+  const nameEl = blockEl.querySelector('.npc-name');
+  return nameEl ? (nameEl.textContent || '').trim() : '';
 }
 
 async function _ttsPlayBlock(btn, blockEl) {
@@ -7073,7 +7085,7 @@ async function _ttsPlayBlock(btn, blockEl) {
     const resp = await fetch('/tts', {
       method: 'POST',
       headers: _authHeaders(),
-      body: JSON.stringify({ text, voice: _ttsVoice }),
+      body: JSON.stringify({ text, voice: _ttsVoice, npc: _ttsSpeaker(blockEl) }),
     });
     if (!resp.ok) throw new Error('TTS ' + resp.status);
     const pcm = await resp.arrayBuffer();

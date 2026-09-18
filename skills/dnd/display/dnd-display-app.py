@@ -2215,6 +2215,54 @@ def _write_narrator_voice(voice: str) -> bool:
         return False
 
 
+# ─── Per-character voices ─────────────────────────────────────────────────────
+# The campaign's ses-haritasi.json casts each NPC: a prebuilt voice plus one
+# line of acting direction. The narrator sits under "_narrator". Keys starting
+# with an underscore are metadata, never speakers.
+#
+# Only the gemini backend uses this. Azure's tr-TR catalog has six voices and
+# no style input, so a cast built for thirty would resolve to nothing.
+
+_VOICE_MAP_CACHE = {"path": None, "mtime": 0.0, "data": {}}
+
+
+def _read_voice_map() -> dict:
+    """Load the active campaign's voice map, re-reading only when it changes."""
+    name = _active_campaign_name()
+    if not name:
+        return {}
+    try:
+        path = _find_campaign(name) / "ses-haritasi.json"
+        mtime = path.stat().st_mtime
+    except (OSError, ValueError):
+        return {}
+    cache = _VOICE_MAP_CACHE
+    if cache["path"] == path and cache["mtime"] == mtime:
+        return cache["data"]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    cache.update(path=path, mtime=mtime, data=data)
+    return data
+
+
+def _cast_entry(npc: str) -> "tuple[str, str]":
+    """Return (voice, style) for a speaker name, or ("", "") if uncast.
+
+    The name has to match what send.py --npc wrote, Turkish letters included.
+    A miss is silent on purpose: an unnamed walk-on should still be narrated
+    rather than failing the request.
+    """
+    entry = _read_voice_map().get(npc) if npc else None
+    if not isinstance(entry, dict):
+        return "", ""
+    return (str(entry.get("gemini") or "").strip(),
+            str(entry.get("yon") or "").strip())
+
+
 @app.route("/tts", methods=["POST"])
 def tts_synthesize():
     """Synthesize a narrator/NPC block to L16 PCM.
@@ -2232,16 +2280,26 @@ def tts_synthesize():
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     voice = (data.get("voice") or _tts.DEFAULT_VOICE).strip()
+    npc = (data.get("npc") or "").strip()
+    style = ""
     if not text:
         return "empty text", 400
     if len(text) > _tts.MAX_TEXT_CHARS:
         text = text[: _tts.MAX_TEXT_CHARS]
+    # An NPC the campaign has cast overrides whatever voice the browser picked;
+    # the dropdown is the narrator's, and a speaker's voice is not the viewer's
+    # to choose. A DM block keeps the browser's selection and only falls back to
+    # the cast's narrator entry when that selection is unusable.
+    if _tts.provider() == "gemini":
+        cast_voice, style = _cast_entry(npc or "_narrator")
+        if cast_voice and (npc or voice not in _tts.VALID_VOICES):
+            voice = cast_voice
     if voice not in _tts.VALID_VOICES:
         voice = _tts.DEFAULT_VOICE
     if _tts.key_source() == "unset":
         return "TTS not configured (see docs/SKILL-tts.md)", 503
     try:
-        pcm = _tts.synthesize_strict(text, voice)
+        pcm = _tts.synthesize_strict(text, voice, style=style)
     except _tts.TtsError as e:
         return f"TTS upstream: {e}", 502
     report = _tts.usage_report()

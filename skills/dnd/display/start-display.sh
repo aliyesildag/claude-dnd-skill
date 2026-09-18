@@ -12,6 +12,10 @@
 # Force UTF-8 for every python this script spawns (display app, RT resolver,
 # http.server) — on non-English Windows the default codepage mangles text.
 export PYTHONUTF8=1
+# Gemini reads acting direction per NPC; Azure's tr-TR voices take none, and
+# provider() prefers Azure whenever its key is still on disk. Pin the choice
+# here so a leftover azure-tts.key cannot silently take the table back.
+export DND_TTS_PROVIDER="${DND_TTS_PROVIDER:-gemini}"
 
 DISPLAY_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$DISPLAY_DIR/app.log"               # process log — recreated each launch

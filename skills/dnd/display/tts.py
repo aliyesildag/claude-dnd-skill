@@ -60,15 +60,28 @@ AZURE_RETRIES = 3
 AZURE_BACKOFF = 4.0
 
 # Gemini ---------------------------------------------------------------------
+# Two filenames, oldest first. tts.key held a short-lived OAuth token that
+# expired; gemini.key is the durable AI Studio key. Trying both means a stale
+# tts.key no longer takes the provider down.
 GEMINI_KEY_FILE = CONFIG_DIR / "tts.key"
+GEMINI_KEY_FILE_ALT = CONFIG_DIR / "gemini.key"
+GEMINI_KEY_FILES = (GEMINI_KEY_FILE, GEMINI_KEY_FILE_ALT)
 GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 GEMINI_TTS_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_TTS_MODEL}:generateContent"
 )
-GEMINI_VOICES_MALE = ["Charon", "Enceladus", "Fenrir", "Umbriel"]
-GEMINI_VOICES_FEMALE = ["Aoede", "Gacrux", "Kore", "Vindemiatrix", "Zephyr"]
-GEMINI_DEFAULT_VOICE = "Enceladus"
+# The full prebuilt catalog, 30 voices. The earlier nine-name list predated the
+# per-character cast in the campaign's ses-haritasi.json, which draws on all of
+# them; a name missing here gets silently coerced to the default.
+GEMINI_VOICES_MALE = ["Achird", "Algenib", "Algieba", "Alnilam", "Charon",
+                      "Enceladus", "Fenrir", "Iapetus", "Orus", "Puck",
+                      "Rasalgethi", "Sadachbia", "Sadaltager", "Schedar",
+                      "Umbriel", "Zubenelgenubi"]
+GEMINI_VOICES_FEMALE = ["Achernar", "Aoede", "Autonoe", "Callirrhoe", "Despina",
+                        "Erinome", "Gacrux", "Kore", "Laomedeia", "Leda",
+                        "Pulcherrima", "Sulafat", "Vindemiatrix", "Zephyr"]
+GEMINI_DEFAULT_VOICE = "Charon"
 
 # Shared ---------------------------------------------------------------------
 # Azure F0 caps a single request at 3000 characters of plain text; 2000 also
@@ -123,10 +136,16 @@ def _gemini_key() -> Optional[str]:
         v = os.environ.get(env)
         if v and v.strip():
             return v.strip()
-    try:
-        return GEMINI_KEY_FILE.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
+    for path in GEMINI_KEY_FILES:
+        try:
+            v = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        # A key that is not an AI Studio key (`AIza…`) is a stale OAuth token.
+        # Skipping it here is what lets gemini.key take over from tts.key.
+        if v and v.startswith("AIza"):
+            return v
+    return None
 
 
 def provider() -> str:
@@ -188,7 +207,12 @@ def key_source() -> str:
             if (os.environ.get(env) or "").strip():
                 return f"env:{env}"
         if _gemini_key():
-            return f"file:{GEMINI_KEY_FILE}"
+            for path in GEMINI_KEY_FILES:
+                try:
+                    if path.read_text(encoding="utf-8").strip().startswith("AIza"):
+                        return f"file:{path}"
+                except OSError:
+                    continue
         return "unset"
     return "unset"
 
@@ -315,10 +339,16 @@ def _synthesize_azure(text: str, voice: str, timeout: float) -> bytes:
     return _post(req, timeout, AZURE_RETRY_STATUS, AZURE_RETRIES, AZURE_BACKOFF)
 
 
-def _synthesize_gemini(text: str, voice: str, timeout: float) -> bytes:
+def _synthesize_gemini(text: str, voice: str, timeout: float,
+                      style: "str | None" = None) -> bytes:
     key = _gemini_key()
     if not key:
         raise TtsError("no gemini key configured")
+    # Gemini takes acting direction as plain text ahead of the line. This is the
+    # whole reason the campaign keeps a `yon` per NPC: the same prebuilt voice
+    # reads Toprak and the narrator differently once it is told how.
+    if style:
+        text = f"{style}\n\n{text}"
     body = {
         "contents": [{"role": "user", "parts": [{"text": text}]}],
         "generationConfig": {
@@ -350,8 +380,13 @@ def synthesize_strict(
     text: str,
     voice: "str | None" = None,
     timeout: float = DEFAULT_TIMEOUT,
+    style: "str | None" = None,
 ) -> bytes:
     """Synthesize to raw L16 PCM (24 kHz mono). Raises TtsError on any failure.
+
+    `style` is acting direction for the line. Only the gemini backend honours
+    it; Azure's tr-TR voices take no style input, so it is dropped there rather
+    than being spoken aloud as part of the text.
 
     Use synthesize() for the silent-fail path.
     """
@@ -370,7 +405,7 @@ def synthesize_strict(
         voice = default_voice()
 
     pcm = (_synthesize_azure(text, voice, timeout) if prov == "azure"
-           else _synthesize_gemini(text, voice, timeout))
+           else _synthesize_gemini(text, voice, timeout, style))
     if not pcm:
         raise TtsError("empty pcm payload")
 
@@ -378,10 +413,11 @@ def synthesize_strict(
     return pcm
 
 
-def synthesize(text: str, voice: "str | None" = None) -> Optional[bytes]:
+def synthesize(text: str, voice: "str | None" = None,
+               style: "str | None" = None) -> Optional[bytes]:
     """Silent-fail wrapper. Returns L16 PCM bytes or None on any failure."""
     try:
-        return synthesize_strict(text, voice)
+        return synthesize_strict(text, voice, style=style)
     except TtsError:
         return None
 
