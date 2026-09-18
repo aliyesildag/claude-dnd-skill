@@ -3924,10 +3924,6 @@
     <span class="audio-label">Type Speed</span>
     <span id="speed-label" class="speed-label">Normal</span>
   </div>
-  <div class="audio-row" id="narrate-row" title="Auto-narrate new blocks in this browser only" hidden>
-    <span class="audio-label">Auto Narrate</span>
-    <span id="narrate-label" class="narrate-label">Off</span>
-  </div>
   <div class="audio-row" id="theme-row" title="Display theme — Dark / Light / Auto (system)">
     <span class="audio-label">Theme</span>
     <span id="theme-label" class="theme-label">Dark</span>
@@ -7027,8 +7023,6 @@ let _ttsVoice = [
   localStorage.getItem('dnd_tts_voice'),
 ].find(v => v && _TTS_VOICES_ALL.includes(v)) || _TTS_VOICES_ALL[0] || '';
 
-let _ttsAutoNarrate = localStorage.getItem('dnd_tts_auto') === '1';
-
 let _ttsCtx = null;
 let _ttsActiveSource = null;
 let _ttsActivePlayBtn = null;
@@ -7234,41 +7228,11 @@ function _addTtsBar(blockEl) {
   });
 
   blockEl.appendChild(bar);
-
-  if (_ttsAutoNarrate) {
-    // Defer one tick so the bar is in the DOM before triggering the click path
-    setTimeout(() => _ttsPlayBlock(playBtn, blockEl), 0);
-  }
 }
 
 document.addEventListener('click', () => {
   document.querySelectorAll('.tts-voice-menu').forEach(m => { m.hidden = true; });
 }, { passive: true });
-
-// Auto-narrate row — only shown if the server reports TTS available.
-if (_TTS_AVAILABLE) {
-  const narrateRow = document.getElementById('narrate-row');
-  const narrateLabel = document.getElementById('narrate-label');
-  if (narrateRow && narrateLabel) {
-    narrateRow.hidden = false;
-    const refresh = () => {
-      narrateLabel.textContent = _ttsAutoNarrate ? 'On' : 'Off';
-      narrateLabel.classList.toggle('on', _ttsAutoNarrate);
-    };
-    refresh();
-    narrateRow.addEventListener('click', () => {
-      _ttsAutoNarrate = !_ttsAutoNarrate;
-      localStorage.setItem('dnd_tts_auto', _ttsAutoNarrate ? '1' : '0');
-      refresh();
-      if (_ttsAutoNarrate) {
-        // Prime the AudioContext from this click so auto-narrate works on the next
-        // block without needing a per-block gesture (iOS Safari).
-        const ctx = _getTtsCtx();
-        if (ctx.state !== 'running') ctx.resume().catch(() => {});
-      }
-    });
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // THEME PICKER (Dark / Light / Auto)
