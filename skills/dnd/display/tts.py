@@ -355,8 +355,16 @@ _CACHE_WRITES = 0
 
 
 def _cache_key(prov: str, voice: str, style: str, text: str) -> str:
-    """Everything that changes the audio, and nothing that does not."""
-    raw = "\0".join((prov, voice, style or "", text)).encode("utf-8")
+    """Everything that changes the audio, and nothing that does not.
+
+    Whitespace is collapsed first. send.py sends a block with its line breaks
+    intact while the browser reads it back out of the DOM with runs of space
+    flattened, so the same line arrives spelled two ways and would otherwise be
+    paid for twice. The synthesized text keeps its original spacing; only the
+    key is normalized.
+    """
+    flat = " ".join((text or "").split())
+    raw = "\0".join((prov, voice, style or "", flat)).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 

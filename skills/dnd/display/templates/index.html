@@ -4881,6 +4881,11 @@ if (_newPill) {
 let charDelay = 36;      // ms per character while typing (mutable — see speed toggle)
 const IDLE_GAP   = 1800; // ms silence before starting a new block
 
+// Who speaks the quoted lines in the narration now streaming in. Set from the
+// payload as it arrives and pinned to the block, because narration is typed out
+// character by character and the element outlives the message that started it.
+let _pendingSpeaker = '';
+
 function getOrCreateBlock() {
   if (!currentEl) {
     currentEl = document.createElement('div');
@@ -4890,6 +4895,7 @@ function getOrCreateBlock() {
     textContent.appendChild(currentEl);
     scrollToBottom();
   }
+  if (_pendingSpeaker) currentEl.dataset.speaker = _pendingSpeaker;
   return currentEl.querySelector('p:last-child');
 }
 
@@ -5605,6 +5611,7 @@ function renderReplayBatch(items) {
       const block = document.createElement('div');
       block.className = 'dm-block';
       block.style.opacity = '0.75';
+      if (item.speaker) block.dataset.speaker = item.speaker;
       item.text.split('\n').forEach(line => {
         const p = document.createElement('p');
         _appendInlineSegments(p, _mdParse(line));
@@ -7060,11 +7067,16 @@ function _ttsExtractText(blockEl) {
   return (clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 2000);
 }
 
-// The speaker name the server matches against the campaign's cast. Empty for a
-// DM block, which keeps the narrator voice chosen in the dropdown.
+// Two different things, so two fields. An NPC block is one character start to
+// finish, and its name voices the whole block. A narration block belongs to the
+// narrator and only the quoted lines inside it belong to the speaker.
 function _ttsSpeaker(blockEl) {
   const nameEl = blockEl.querySelector('.npc-name');
   return nameEl ? (nameEl.textContent || '').trim() : '';
+}
+
+function _ttsDialogueSpeaker(blockEl) {
+  return (blockEl.dataset && blockEl.dataset.speaker) ? blockEl.dataset.speaker.trim() : '';
 }
 
 async function _ttsPlayBlock(btn, blockEl) {
@@ -7085,7 +7097,12 @@ async function _ttsPlayBlock(btn, blockEl) {
     const resp = await fetch('/tts', {
       method: 'POST',
       headers: _authHeaders(),
-      body: JSON.stringify({ text, voice: _ttsVoice, npc: _ttsSpeaker(blockEl) }),
+      body: JSON.stringify({
+        text,
+        voice: _ttsVoice,
+        npc: _ttsSpeaker(blockEl),
+        speaker: _ttsDialogueSpeaker(blockEl),
+      }),
     });
     if (!resp.ok) throw new Error('TTS ' + resp.status);
     const pcm = await resp.arrayBuffer();
@@ -8288,6 +8305,7 @@ function connect() {
       renderXpBlock(payload.xp_award);
     }
     if (payload.text && !payload.inspiration_award && !payload.milestone_award && !payload.milestone_spend && !payload.xp_award) {
+      _pendingSpeaker = payload.speaker || '';
       if (payload.action) {
         renderActionBlock(payload.action, payload.text);
       } else if (payload.player) {

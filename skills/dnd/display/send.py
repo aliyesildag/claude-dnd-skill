@@ -421,6 +421,12 @@ def main() -> None:
         help="Send as NPC dialogue with amber styling and character name header",
     )
     parser.add_argument(
+        "--speaker", metavar="NAME",
+        help="Who speaks the quoted lines inside a narration block. The prose "
+             "stays with the narrator and the quotes take this character's "
+             "voice. Name must match the campaign's ses-haritasi.json key.",
+    )
+    parser.add_argument(
         "--dice", action="store_true",
         help="Send as a dice result (inline gold styling)",
     )
@@ -765,6 +771,10 @@ def main() -> None:
                 payload["dice"] = True
             elif args.tutor:
                 payload["tutor"] = True
+            # Orthogonal to the block type: a narration block keeps being a
+            # narration block, it just names who speaks inside it.
+            if args.speaker:
+                payload["speaker"] = args.speaker
 
             issues = _validate_payload(payload, "chunk")
             if issues:

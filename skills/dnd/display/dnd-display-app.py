@@ -58,6 +58,8 @@ except Exception:
     _SRD_AVAILABLE = False
 
 from paths import find_campaign as _find_campaign
+
+import dialogue as _dialogue
 from utf8io import read_text as _read_text
 
 # Audio module — degrades silently if numpy not installed
@@ -1701,8 +1703,16 @@ def chunk():
         if _audio:
             _audio.on_text(cleaned)
 
+    # Not a block type: narration that names who speaks inside it, so the TTS
+    # layer can hand the quoted lines to that character's voice.
+    speaker = (data.get("speaker") or "").strip()
+    if speaker:
+        payload["speaker"] = speaker
+
     # Store full typed payload so replay preserves action/player/npc/dice/tutor context
     log_entry: dict = {"text": cleaned}
+    if speaker:
+        log_entry["speaker"] = speaker
     if is_action:
         log_entry["action"] = data["action"]
     elif is_player:
@@ -2225,6 +2235,10 @@ def _write_narrator_voice(voice: str) -> bool:
 
 _VOICE_MAP_CACHE = {"path": None, "mtime": 0.0, "data": {}}
 
+# A quarter second between spans: long enough to hear the voice change, short
+# enough that prose and the line it introduces stay one breath.
+_SPAN_GAP = b"\x00\x00" * int(24000 * 0.25)
+
 
 def _read_voice_map() -> dict:
     """Load the active campaign's voice map, re-reading only when it changes."""
@@ -2281,6 +2295,7 @@ def tts_synthesize():
     text = (data.get("text") or "").strip()
     voice = (data.get("voice") or _tts.DEFAULT_VOICE).strip()
     npc = (data.get("npc") or "").strip()
+    speaker = (data.get("speaker") or "").strip()
     style = ""
     if not text:
         return "empty text", 400
@@ -2298,8 +2313,26 @@ def tts_synthesize():
         voice = _tts.DEFAULT_VOICE
     if _tts.key_source() == "unset":
         return "TTS not configured (see docs/SKILL-tts.md)", 503
+
+    # A narration block that declares a speaker is read by two voices: the prose
+    # stays with the narrator, the quoted lines go to that character. Azure has
+    # no cast to draw on, so it reads the block whole as before.
+    spans = [(None, text)]
+    if speaker and not npc and _tts.provider() == "gemini":
+        spans = _dialogue.split(text, speaker)
+
     try:
-        pcm = _tts.synthesize_strict(text, voice, style=style)
+        chunks = []
+        for who, span in spans:
+            span_voice, span_style = voice, style
+            if who:
+                cast_voice, cast_style = _cast_entry(who)
+                # An uncast speaker keeps the narrator's voice rather than
+                # dropping the line.
+                if cast_voice:
+                    span_voice, span_style = cast_voice, cast_style
+            chunks.append(_tts.synthesize_strict(span, span_voice, style=span_style))
+        pcm = _SPAN_GAP.join(chunks)
     except _tts.TtsError as e:
         return f"TTS upstream: {e}", 502
     report = _tts.usage_report()
