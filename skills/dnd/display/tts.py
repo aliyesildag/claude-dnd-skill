@@ -21,8 +21,10 @@ stdlib only — no requests, no SDKs. Setup walkthrough: docs/SKILL-tts.md.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -93,6 +95,25 @@ MAX_TEXT_CHARS = 2000
 FREE_TIER_CHARS = 500_000
 
 USAGE_FILE = CONFIG_DIR / "tts-usage.json"
+
+# Synthesis cache -------------------------------------------------------------
+# Four players open the display in four browsers, and with autorun each of them
+# asks for the same block at the same moment. Without a shared cache that is the
+# same line paid for four times; without the lock below it still is, because all
+# four miss an empty cache together. So: cache on the server, keyed by exactly
+# what determines the audio, and let the first request in synthesize while the
+# others wait on its result.
+CACHE_DIR = CONFIG_DIR / "tts-cache"
+CACHE_MAX_BYTES = 512 * 1024 * 1024        # ~3 hours of 24 kHz mono PCM
+_CACHE_PRUNE_EVERY = 50                     # writes between size checks
+
+# Gemini bills audio tokens, not characters, so the character tally cannot be
+# read against a free quota the way Azure's could. This converts: tr-TR speech
+# runs about 13.785 characters a second (measured on this table's own blocks),
+# audio output is roughly 25 tokens a second, and audio tokens are $10/1M.
+# It is an estimate — the token rate is the part not verified against a price
+# sheet — so the report labels it as one.
+GEMINI_USD_PER_CHAR = 25.0 / 13.785 / 1_000_000 * 10.0
 
 # Azure typically answers in under 15s; Gemini's preview model has been
 # measured at 46-251s for a 77s block, so the timeout has to cover the worst.
@@ -261,6 +282,33 @@ def record_usage(chars: int, voice: str, prov: str) -> None:
             pass
 
 
+def record_cache_hit(chars: int, voice: str, prov: str) -> None:
+    """Tally a line served from cache. Never raises.
+
+    Kept apart from record_usage because these characters were never billed;
+    counting them together would overstate the spend and hide what the cache
+    is actually saving with four browsers on the same block.
+    """
+    if chars <= 0:
+        return
+    data = _load_usage()
+    month = data.setdefault(_month_key(), {})
+    bucket = month.setdefault(prov, {"chars": 0, "calls": 0, "voices": {}})
+    bucket["cached_chars"] = int(bucket.get("cached_chars", 0)) + chars
+    bucket["cached_calls"] = int(bucket.get("cached_calls", 0)) + 1
+    tmp = USAGE_FILE.with_suffix(".json.tmp")
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, USAGE_FILE)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def usage_report(month: "str | None" = None) -> dict:
     """Return this month's totals plus the free-quota position."""
     month = month or _month_key()
@@ -270,17 +318,146 @@ def usage_report(month: "str | None" = None) -> dict:
     calls = sum(int(b.get("calls", 0)) for b in buckets.values()
                 if isinstance(b, dict))
     azure_chars = int((buckets.get("azure") or {}).get("chars", 0))
+    gemini = buckets.get("gemini") or {}
+    gemini_chars = int(gemini.get("chars", 0))
+    cached_chars = sum(int(b.get("cached_chars", 0)) for b in buckets.values()
+                       if isinstance(b, dict))
+    cached_calls = sum(int(b.get("cached_calls", 0)) for b in buckets.values()
+                       if isinstance(b, dict))
     return {
         "month": month,
+        "provider": provider(),
         "chars": chars,
         "calls": calls,
         "by_provider": buckets,
+        # Azure only. The F0 quota does not exist on the gemini backend, and
+        # reading this percentage while gemini is active would show a number
+        # frozen at whatever Azure last billed.
         "free_tier_chars": FREE_TIER_CHARS,
         "free_tier_used_pct": round(100.0 * azure_chars / FREE_TIER_CHARS, 1),
         "free_tier_remaining": max(0, FREE_TIER_CHARS - azure_chars),
+        # Gemini bills tokens; this is an estimate, see GEMINI_USD_PER_CHAR.
+        "gemini_usd_est": round(gemini_chars * GEMINI_USD_PER_CHAR, 2),
+        "cached_chars": cached_chars,
+        "cached_calls": cached_calls,
+        "cached_usd_saved_est": round(cached_chars * GEMINI_USD_PER_CHAR, 2),
+        "cache": cache_stats(),
         # 1089 characters measured at 79s of speech on the tr-TR voices.
         "audio_minutes_est": round(chars / 13.785 / 60.0, 1),
     }
+
+
+# ── Synthesis cache ─────────────────────────────────────────────────────────
+
+_CACHE_LOCKS: "dict[str, threading.Lock]" = {}
+_CACHE_LOCKS_GUARD = threading.Lock()
+_CACHE_WRITES = 0
+
+
+def _cache_key(prov: str, voice: str, style: str, text: str) -> str:
+    """Everything that changes the audio, and nothing that does not."""
+    raw = "\0".join((prov, voice, style or "", text)).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _cache_path(key: str) -> Path:
+    # One level of fan-out: a long campaign leaves thousands of files, and a
+    # flat directory makes every lookup walk them.
+    return CACHE_DIR / key[:2] / f"{key}.pcm"
+
+
+def _cache_read(key: str) -> Optional[bytes]:
+    path = _cache_path(key)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if not data:
+        return None
+    try:
+        os.utime(path, None)     # mtime doubles as the LRU stamp
+    except OSError:
+        pass
+    return data
+
+
+def _cache_write(key: str, pcm: bytes) -> None:
+    """Never raises: a cache that cannot be written must not fail the request."""
+    global _CACHE_WRITES
+    path = _cache_path(key)
+    tmp = path.with_suffix(".pcm.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(pcm)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return
+    _CACHE_WRITES += 1
+    if _CACHE_WRITES % _CACHE_PRUNE_EVERY == 0:
+        _prune_cache()
+
+
+def _prune_cache(max_bytes: int = CACHE_MAX_BYTES) -> int:
+    """Drop the least recently read files until the cache fits. Returns bytes freed."""
+    entries = []
+    total = 0
+    try:
+        for sub in CACHE_DIR.iterdir():
+            if not sub.is_dir():
+                continue
+            for f in sub.iterdir():
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, st.st_size, f))
+                total += st.st_size
+    except OSError:
+        return 0
+    if total <= max_bytes:
+        return 0
+    entries.sort()                      # oldest read first
+    freed = 0
+    target = total - int(max_bytes * 0.8)
+    for _, size, f in entries:
+        if freed >= target:
+            break
+        try:
+            f.unlink()
+            freed += size
+        except OSError:
+            continue
+    return freed
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _CACHE_LOCKS_GUARD:
+        lock = _CACHE_LOCKS.get(key)
+        if lock is None:
+            lock = _CACHE_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def cache_stats() -> dict:
+    files = 0
+    total = 0
+    try:
+        for sub in CACHE_DIR.iterdir():
+            if not sub.is_dir():
+                continue
+            for f in sub.iterdir():
+                try:
+                    total += f.stat().st_size
+                except OSError:
+                    continue
+                files += 1
+    except OSError:
+        pass
+    return {"files": files, "bytes": total, "max_bytes": CACHE_MAX_BYTES}
 
 
 # ── Synthesis ───────────────────────────────────────────────────────────────
@@ -404,13 +581,28 @@ def synthesize_strict(
     if voice not in valid_voices():
         voice = default_voice()
 
-    pcm = (_synthesize_azure(text, voice, timeout) if prov == "azure"
-           else _synthesize_gemini(text, voice, timeout, style))
-    if not pcm:
-        raise TtsError("empty pcm payload")
+    key = _cache_key(prov, voice, style or "", text)
+    cached = _cache_read(key)
+    if cached is not None:
+        record_cache_hit(len(text), voice, prov)
+        return cached
 
-    record_usage(len(text), voice, prov)
-    return pcm
+    with _key_lock(key):
+        # The three other browsers queue here rather than each paying for the
+        # same line. By the time they get the lock the first one has written it.
+        cached = _cache_read(key)
+        if cached is not None:
+            record_cache_hit(len(text), voice, prov)
+            return cached
+
+        pcm = (_synthesize_azure(text, voice, timeout) if prov == "azure"
+               else _synthesize_gemini(text, voice, timeout, style))
+        if not pcm:
+            raise TtsError("empty pcm payload")
+
+        _cache_write(key, pcm)
+        record_usage(len(text), voice, prov)
+        return pcm
 
 
 def synthesize(text: str, voice: "str | None" = None,
@@ -459,8 +651,17 @@ def _cli() -> int:
             if isinstance(b, dict):
                 print(f"  {name:<8} {int(b.get('chars', 0)):>8,} chars  "
                       f"{int(b.get('calls', 0)):>4} calls")
-        print(f"Azure F0: {r['free_tier_used_pct']}% of {r['free_tier_chars']:,} "
-              f"({r['free_tier_remaining']:,} left)")
+        if r["cached_calls"]:
+            print(f"Cached:   {r['cached_chars']:,} chars over {r['cached_calls']:,} "
+                  f"replays  (~${r['cached_usd_saved_est']} not spent)")
+        c = r["cache"]
+        print(f"On disk:  {c['files']:,} files, {c['bytes'] / 1e6:.1f} MB "
+              f"of {c['max_bytes'] / 1e6:.0f} MB")
+        if r["provider"] == "gemini":
+            print(f"Gemini:   ~${r['gemini_usd_est']} this month (token estimate)")
+        else:
+            print(f"Azure F0: {r['free_tier_used_pct']}% of {r['free_tier_chars']:,} "
+                  f"({r['free_tier_remaining']:,} left)")
         return 0
 
     if args.voices:
