@@ -181,10 +181,10 @@
     position: fixed; inset: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    /* left: sidebar+gap. right: the settings rail is fixed at ~310px wide
-       against the right edge; 18vw undershoots that below ~1720px wide, and
-       a wide column then runs under the rail. */
-    padding: 72px max(360px, 18vw) 80px 230px;
+    /* left: sidebar (--sb-w) + a gap. right: the settings rail is fixed at
+       ~310px wide against the right edge; 18vw undershoots that below ~1720px
+       wide, and a wide column then runs under the rail. */
+    padding: 72px max(360px, 18vw) 80px calc(var(--sb-w, 262px) + 20px);
     z-index: 4;
     scroll-behavior: smooth;
     transition: padding 0.4s ease;
@@ -806,14 +806,17 @@
   #sidebar-toggle:hover { color: rgba(180,140,60,0.8); }
   #sidebar-toggle.visible { display: block; }
 
+  :root { --sb-w: 262px; }
+
   #sidebar {
     position: fixed;
     left: 0;
     top: 60px;
     bottom: 28px;
     /* 210px cut long Turkish faction names mid-word and left the portrait
-       sitting on the character's name. */
-    width: 262px;
+       sitting on the character's name. #text-scroll's left padding is derived
+       from this, so the two can't drift apart. */
+    width: var(--sb-w, 262px);
     z-index: 6;
     overflow-y: auto;
     overflow-x: hidden;
@@ -827,7 +830,7 @@
   }
   #sidebar.has-data { opacity: 1; }
   #sidebar.hidden {
-    transform: translateX(-262px);
+    transform: translateX(calc(-1 * var(--sb-w, 262px)));
     opacity: 0;
     pointer-events: none;
   }

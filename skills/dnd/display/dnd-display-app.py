@@ -111,6 +111,7 @@ _apply_campaign_sfx_languages()
 HELP_LOCK     = rt(".help-lock")
 CAMP_FILE     = rt(".campaign")
 STATS_FILE    = rt("stats.json")
+MINIMAP_FILE  = rt("minimap.json")
 TOKEN_FILE    = rt(".token")
 INPUT_FILE    = rt("player_input.json")
 TRIGGER_FILE  = rt(".input_trigger")
@@ -1193,6 +1194,33 @@ _minimap: dict = {}
 _minimap_lock = threading.Lock()
 
 
+def _persist_minimap() -> None:
+    """Keep the pinned map across a display restart — like stats, it is table
+    state, and having it vanish when the server is bounced mid-session is the
+    one thing a pinned map must not do."""
+    try:
+        with _minimap_lock:
+            data = dict(_minimap)
+        with open(MINIMAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def _load_minimap() -> None:
+    global _minimap
+    try:
+        with open(MINIMAP_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("image"):
+            _minimap = data
+    except Exception:
+        pass
+
+
+_load_minimap()
+
+
 @app.route("/minimap", methods=["POST"])
 def minimap_route():
     """Set or clear the pinned map. Body: {"image": "/scenes/x.jpg", "label": "..."}
@@ -1209,6 +1237,7 @@ def minimap_route():
         if img:
             _minimap.update({"image": img, "label": label})
         payload = dict(_minimap)
+    _persist_minimap()
     _broadcast({"minimap": payload})
     return "", 204
 
