@@ -811,7 +811,9 @@
     left: 0;
     top: 60px;
     bottom: 28px;
-    width: 210px;
+    /* 210px cut long Turkish faction names mid-word and left the portrait
+       sitting on the character's name. */
+    width: 262px;
     z-index: 6;
     overflow-y: auto;
     overflow-x: hidden;
@@ -825,7 +827,7 @@
   }
   #sidebar.has-data { opacity: 1; }
   #sidebar.hidden {
-    transform: translateX(-210px);
+    transform: translateX(-262px);
     opacity: 0;
     pointer-events: none;
   }
@@ -1437,12 +1439,23 @@
     text-transform: uppercase; color: rgba(180,140,60,0.35); margin-bottom: 6px;
   }
   .sb-faction-item {
-    display: flex; justify-content: space-between; align-items: baseline;
-    gap: 6px; padding: 2px 0;
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 0 6px; padding: 2px 0;
   }
+  /* When the name needs the whole width, the standing drops to its own line
+     rather than squeezing the name into a column too narrow for one word. */
+  .sb-faction-item > .sb-faction-standing { margin-left: auto; }
+  /* Wrap rather than clip: "Kırkbasamak Tapı…" told the reader which faction
+     it was only if they already knew. Two lines, then ellipsis. */
   .sb-faction-name {
     font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.6);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+    flex: 1; min-width: 0; line-height: 1.32;
+    flex: 1 1 100%;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden;
+    /* Break between words first — "Kırkbasam ak…" is worse than two clean lines.
+       Only a single word longer than the row is broken. */
+    overflow-wrap: break-word; word-break: normal; hyphens: none;
   }
   .sb-faction-standing {
     font-family: 'Cinzel', serif; font-size: calc(11px * var(--ui-scale, 1));
@@ -1466,16 +1479,18 @@
     text-transform: uppercase; color: rgba(180,140,60,0.35); margin-bottom: 6px;
   }
   .sb-quest-item {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    gap: 7px; padding: 3px 0;
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 0 7px; padding: 3px 0;
   }
+  .sb-quest-item > .sb-quest-status { margin-left: auto; }
   /* Two lines, then ellipsis — a 210px rail cut most quest titles mid-word and
      the status alone told the reader nothing about which quest it belonged to. */
   .sb-quest-name {
     font-size: calc(11px * var(--ui-scale, 1)); color: rgba(200,185,150,0.6);
-    flex: 1; min-width: 0; line-height: 1.32;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-    overflow: hidden; overflow-wrap: anywhere;
+    flex: 1 1 100%; min-width: 0; line-height: 1.32;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden;
+    overflow-wrap: break-word; word-break: normal; hyphens: none;
   }
   .sb-quest-status {
     font-family: 'Cinzel', serif; font-size: calc(11px * var(--ui-scale, 1));
