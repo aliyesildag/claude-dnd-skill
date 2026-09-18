@@ -264,6 +264,28 @@ def _check_name(kind: str, name: str, known: set) -> "str | None":
     return f"{kind} {name!r} is not one the display knows.\n{hint}"
 
 
+def _resolve_alias(kind: str, name: str, known: set) -> "str | None":
+    """Ask the campaign who a scene-name means, when the string does not match.
+
+    `şişeci`, `muhtar`, `Yarımkulak` are how the DM writes mid-scene and none of
+    them are typos, so difflib cannot rescue them. The guard answers from the
+    campaign's own cast, so whatever comes back is a name the display can route.
+    Best effort: no key, no network or an unsure answer leaves the error alone.
+    """
+    try:
+        import jev_check
+    except ImportError:
+        return None
+    campaign = ((_get_json(HEALTH_URL) or {}).get("campaign") or "").strip()
+    pool = jev_check.cast_with_roles(campaign) if campaign else {}
+    pool = {k: v for k, v in pool.items() if k in known} or {k: k for k in known}
+    resolved, conf = jev_check.resolve_name(name, pool, "NPC" if kind != "--character" else "karakter")
+    if not resolved:
+        return None
+    print(f"send.py: {kind} {name!r} → {resolved!r} (güven {conf:.2f})", file=sys.stderr)
+    return resolved
+
+
 def _verify_health() -> "dict | None":
     """GET /health and return the server's status dict, or None if unreachable.
 
@@ -483,6 +505,11 @@ def main() -> None:
              "voice. Name must match the campaign's ses-haritasi.json key.",
     )
     parser.add_argument(
+        "--force-die", action="store_true",
+        help="Send a dice request even when the die does not match what the label "
+             "says the roll is for. The check only fires when it is confident.",
+    )
+    parser.add_argument(
         "--to", metavar="NAME",
         help="Private block: only the browser bound to this character (and the "
              "DM screen) receives it. The rest of the table never gets the "
@@ -610,15 +637,28 @@ def main() -> None:
     problems = []
     if args.npc or args.speaker:
         cast = _cast_names()
-        problems += [e for e in (_check_name("--npc", args.npc or "", cast),
-                                 _check_name("--speaker", args.speaker or "", cast)) if e]
+        for flag in ("npc", "speaker"):
+            value = getattr(args, flag) or ""
+            e = _check_name(f"--{flag}", value, cast)
+            if not e:
+                continue
+            resolved = _resolve_alias(f"--{flag}", value, cast)
+            if resolved:
+                setattr(args, flag, resolved)
+            else:
+                problems.append(e)
     if args.character or args.to:
         party = set((_get_json(PARTY_URL) or {}).get("players") or [])
         for flag, value in (("--character", args.character), ("--to", args.to)):
             if not value:
                 continue
             e = _check_name(flag, value, party)
-            if e:
+            if not e:
+                continue
+            resolved = _resolve_alias(flag, value, party)
+            if resolved:
+                setattr(args, flag.lstrip("-").replace("-", "_"), resolved)
+            else:
                 problems.append(e)
     if problems:
         for e in problems:
@@ -637,6 +677,24 @@ def main() -> None:
     # through to the text-send block while bare award calls don't block.
     # ── Dice request (DM → phones) — broadcast + optional blocking wait ──────
     if args.dice_request:
+        # A die that does not match what the roll is for reads as correct in every
+        # log and is wrong on the table: four players rolled level-up HP on a d20
+        # because the request said 1d8 and nothing downstream disagreed.
+        if not args.force_die:
+            try:
+                import jev_check
+                _camp = ((_get_json(HEALTH_URL) or {}).get("campaign") or "").strip()
+                ok, expected, conf = jev_check.check_dice(
+                    args.label or "", args.spec, args.character or "",
+                    jev_check.sheet_line(_camp, args.character or ""))
+                if not ok:
+                    sys.exit(
+                        f"send.py: {args.spec} does not fit {args.label!r} — expected "
+                        f"{expected} (confidence {conf:.2f}).\n"
+                        f"  fix the spec, or pass --force-die to send it anyway.")
+            except ImportError:
+                pass
+
         # Comma-split character list so the DM can address multiple players at once,
         # e.g. --character "Piper,Mira,Aldric"  → all three must roll before --wait returns.
         chars = [c.strip() for c in (args.character or "any").split(",") if c.strip()] or ["any"]
