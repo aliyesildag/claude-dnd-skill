@@ -421,6 +421,13 @@ def main() -> None:
         help="Send as NPC dialogue with amber styling and character name header",
     )
     parser.add_argument(
+        "--tone", metavar="MODE",
+        choices=["sonuc", "gerilim", "sessiz"],
+        help="Narrator mode for this block: sonuc (mechanics and results, dry "
+             "and brisk), gerilim (low and tight), sessiz (quiet, close). "
+             "Omit for the default descriptive read.",
+    )
+    parser.add_argument(
         "--speaker", metavar="NAME",
         help="Who speaks the quoted lines inside a narration block. The prose "
              "stays with the narrator and the quotes take this character's "
@@ -775,6 +782,8 @@ def main() -> None:
             # narration block, it just names who speaks inside it.
             if args.speaker:
                 payload["speaker"] = args.speaker
+            if args.tone:
+                payload["tone"] = args.tone
 
             issues = _validate_payload(payload, "chunk")
             if issues:

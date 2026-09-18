@@ -84,6 +84,11 @@ GEMINI_VOICES_FEMALE = ["Achernar", "Aoede", "Autonoe", "Callirrhoe", "Despina",
                         "Erinome", "Gacrux", "Kore", "Laomedeia", "Leda",
                         "Pulcherrima", "Sulafat", "Vindemiatrix", "Zephyr"]
 GEMINI_DEFAULT_VOICE = "Charon"
+# Retries for a 200 that carries an empty candidate. Seen in practice, cleared
+# by retrying every time so far.
+GEMINI_SHAPE_RETRIES = 2
+# $10 per million audio tokens.
+GEMINI_USD_PER_AUDIO_TOKEN = 10.0 / 1_000_000
 
 # Shared ---------------------------------------------------------------------
 # Azure F0 caps a single request at 3000 characters of plain text; 2000 also
@@ -282,6 +287,28 @@ def record_usage(chars: int, voice: str, prov: str) -> None:
             pass
 
 
+def _record_audio_tokens(tokens: int) -> None:
+    """Add billed audio tokens to this month's tally. Never raises."""
+    if tokens <= 0:
+        return
+    data = _load_usage()
+    month = data.setdefault(_month_key(), {})
+    bucket = month.setdefault("gemini", {"chars": 0, "calls": 0, "voices": {}})
+    bucket["audio_tokens"] = int(bucket.get("audio_tokens", 0)) + tokens
+    bucket["metered_calls"] = int(bucket.get("metered_calls", 0)) + 1
+    tmp = USAGE_FILE.with_suffix(".json.tmp")
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, USAGE_FILE)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def record_cache_hit(chars: int, voice: str, prov: str) -> None:
     """Tally a line served from cache. Never raises.
 
@@ -336,8 +363,18 @@ def usage_report(month: "str | None" = None) -> dict:
         "free_tier_chars": FREE_TIER_CHARS,
         "free_tier_used_pct": round(100.0 * azure_chars / FREE_TIER_CHARS, 1),
         "free_tier_remaining": max(0, FREE_TIER_CHARS - azure_chars),
-        # Gemini bills tokens; this is an estimate, see GEMINI_USD_PER_CHAR.
-        "gemini_usd_est": round(gemini_chars * GEMINI_USD_PER_CHAR, 2),
+        # Measured where the API reported it, estimated only for calls made
+        # before token accounting existed.
+        "gemini_audio_tokens": int(gemini.get("audio_tokens", 0)),
+        # Calls made before token accounting existed have no token count, so
+        # their share falls back to the character estimate. Mixing the two beats
+        # reporting only the metered part, which would read as a month that
+        # cost almost nothing.
+        "gemini_usd_est": round(
+            int(gemini.get("audio_tokens", 0)) * GEMINI_USD_PER_AUDIO_TOKEN
+            + max(0, int(gemini.get("calls", 0)) - int(gemini.get("metered_calls", 0)))
+            * (gemini_chars / max(1, int(gemini.get("calls", 1))))
+            * GEMINI_USD_PER_CHAR, 4),
         "cached_chars": cached_chars,
         "cached_calls": cached_calls,
         "cached_usd_saved_est": round(cached_chars * GEMINI_USD_PER_CHAR, 2),
@@ -549,16 +586,45 @@ def _synthesize_gemini(text: str, voice: str, timeout: float,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    raw = _post(req, timeout, frozenset({429, 500, 502, 503, 504}), 3, 8.0)
-    try:
-        data = json.loads(raw)
-        b64 = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
-        raise TtsError(f"bad response shape: {e}") from e
-    try:
-        return base64.b64decode(b64)
-    except Exception as e:
-        raise TtsError(f"bad base64: {e}") from e
+    # Gemini occasionally answers 200 with a candidate that carries no parts —
+    # finishReason STOP, no safety feedback, simply empty. Retrying gets audio.
+    # Surfacing it as a failure would drop a block mid-session for no reason.
+    last = ""
+    for attempt in range(GEMINI_SHAPE_RETRIES + 1):
+        raw = _post(req, timeout, frozenset({429, 500, 502, 503, 504}), 3, 8.0)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise TtsError(f"bad response shape: {e}") from e
+        try:
+            b64 = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+        except (KeyError, IndexError, TypeError) as e:
+            reason = ""
+            try:
+                reason = data["candidates"][0].get("finishReason") or ""
+            except (KeyError, IndexError, TypeError):
+                pass
+            last = f"empty candidate ({e}, finishReason={reason or 'none'})"
+            if attempt == GEMINI_SHAPE_RETRIES:
+                raise TtsError(last)
+            time.sleep(2.0 * (attempt + 1))
+            continue
+        # The response meters itself. Recording the count it reports beats
+        # estimating from character counts, which was out by a wide margin on
+        # the slower narrator modes: direction changes the pace, pace changes
+        # the audio length, and audio length is what gets billed.
+        try:
+            usage = data.get("usageMetadata") or {}
+            for d in usage.get("candidatesTokensDetails") or []:
+                if d.get("modality") == "AUDIO":
+                    _record_audio_tokens(int(d.get("tokenCount") or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            return base64.b64decode(b64)
+        except Exception as e:
+            raise TtsError(f"bad base64: {e}") from e
+    raise TtsError(last or "exhausted retries")
 
 
 def synthesize_strict(
@@ -666,7 +732,11 @@ def _cli() -> int:
         print(f"On disk:  {c['files']:,} files, {c['bytes'] / 1e6:.1f} MB "
               f"of {c['max_bytes'] / 1e6:.0f} MB")
         if r["provider"] == "gemini":
-            print(f"Gemini:   ~${r['gemini_usd_est']} this month (token estimate)")
+            g = r["by_provider"].get("gemini") or {}
+            unmetered = max(0, int(g.get("calls", 0)) - int(g.get("metered_calls", 0)))
+            note = f", {unmetered} call(s) estimated" if unmetered else ""
+            print(f"Gemini:   ${r['gemini_usd_est']} this month "
+                  f"({r['gemini_audio_tokens']:,} audio tokens measured{note})")
         else:
             print(f"Azure F0: {r['free_tier_used_pct']}% of {r['free_tier_chars']:,} "
                   f"({r['free_tier_remaining']:,} left)")

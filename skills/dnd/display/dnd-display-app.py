@@ -1708,11 +1708,16 @@ def chunk():
     speaker = (data.get("speaker") or "").strip()
     if speaker:
         payload["speaker"] = speaker
+    tone = (data.get("tone") or "").strip()
+    if tone:
+        payload["tone"] = tone
 
     # Store full typed payload so replay preserves action/player/npc/dice/tutor context
     log_entry: dict = {"text": cleaned}
     if speaker:
         log_entry["speaker"] = speaker
+    if tone:
+        log_entry["tone"] = tone
     if is_action:
         log_entry["action"] = data["action"]
     elif is_player:
@@ -2263,6 +2268,24 @@ def _read_voice_map() -> dict:
     return data
 
 
+_TONE_PAT = re.compile(r"^[a-z_]{1,24}$")
+
+
+def _narrator_key(tone: str) -> str:
+    """Pick the narrator entry for this block's mode.
+
+    The narrator keeps one voice all session; what changes is the pace it is
+    told to read at, so a rules-and-XP block does not get the same unhurried
+    delivery as a room being described. An unknown mode falls back rather than
+    losing the narration.
+    """
+    tone = (tone or "").strip().lower()
+    if not tone or not _TONE_PAT.match(tone):
+        return "_narrator"
+    key = f"_narrator_{tone}"
+    return key if isinstance(_read_voice_map().get(key), dict) else "_narrator"
+
+
 def _cast_entry(npc: str) -> "tuple[str, str]":
     """Return (voice, style) for a speaker name, or ("", "") if uncast.
 
@@ -2296,6 +2319,7 @@ def tts_synthesize():
     voice = (data.get("voice") or _tts.DEFAULT_VOICE).strip()
     npc = (data.get("npc") or "").strip()
     speaker = (data.get("speaker") or "").strip()
+    tone = (data.get("tone") or "").strip()
     style = ""
     if not text:
         return "empty text", 400
@@ -2306,7 +2330,7 @@ def tts_synthesize():
     # to choose. A DM block keeps the browser's selection and only falls back to
     # the cast's narrator entry when that selection is unusable.
     if _tts.provider() == "gemini":
-        cast_voice, style = _cast_entry(npc or "_narrator")
+        cast_voice, style = _cast_entry(npc or _narrator_key(tone))
         if cast_voice and (npc or voice not in _tts.VALID_VOICES):
             voice = cast_voice
     if voice not in _tts.VALID_VOICES:

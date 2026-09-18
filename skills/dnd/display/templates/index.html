@@ -4885,6 +4885,7 @@ const IDLE_GAP   = 1800; // ms silence before starting a new block
 // payload as it arrives and pinned to the block, because narration is typed out
 // character by character and the element outlives the message that started it.
 let _pendingSpeaker = '';
+let _pendingTone = '';
 
 function getOrCreateBlock() {
   if (!currentEl) {
@@ -4896,6 +4897,7 @@ function getOrCreateBlock() {
     scrollToBottom();
   }
   if (_pendingSpeaker) currentEl.dataset.speaker = _pendingSpeaker;
+  if (_pendingTone) currentEl.dataset.tone = _pendingTone;
   return currentEl.querySelector('p:last-child');
 }
 
@@ -5612,6 +5614,7 @@ function renderReplayBatch(items) {
       block.className = 'dm-block';
       block.style.opacity = '0.75';
       if (item.speaker) block.dataset.speaker = item.speaker;
+      if (item.tone) block.dataset.tone = item.tone;
       item.text.split('\n').forEach(line => {
         const p = document.createElement('p');
         _appendInlineSegments(p, _mdParse(line));
@@ -7102,6 +7105,7 @@ async function _ttsPlayBlock(btn, blockEl) {
         voice: _ttsVoice,
         npc: _ttsSpeaker(blockEl),
         speaker: _ttsDialogueSpeaker(blockEl),
+        tone: (blockEl.dataset && blockEl.dataset.tone) ? blockEl.dataset.tone : '',
       }),
     });
     if (!resp.ok) throw new Error('TTS ' + resp.status);
@@ -8306,6 +8310,7 @@ function connect() {
     }
     if (payload.text && !payload.inspiration_award && !payload.milestone_award && !payload.milestone_spend && !payload.xp_award) {
       _pendingSpeaker = payload.speaker || '';
+      _pendingTone = payload.tone || '';
       if (payload.action) {
         renderActionBlock(payload.action, payload.text);
       } else if (payload.player) {
