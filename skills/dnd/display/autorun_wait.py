@@ -168,9 +168,13 @@ if "--auto-route" in sys.argv and content.strip():
                     f"{'özel' if r.get('ozel') else 'ortak'} · dal {r.get('dal')}{mark}\n")
                 if auto_dice and conf >= floor and mod is not None:
                     subprocess.run(
+                        # --force-die: the router already settled that this is an
+                        # ability check on a d20, and asking the send-side guard
+                        # to re-derive it costs a second round trip per player.
                         [sys.executable, os.path.join(DISPLAY_DIR, "send.py"), "--dice-request",
-                         "--character", name, "--spec", "1d20", "--modifier", str(mod),
-                         "--label", f"{skill} — {text[:60]}", "--dc", str(r.get("dc"))],
+                         "--force-die", "--character", name, "--spec", "1d20",
+                         "--modifier", str(mod), "--label", f"{skill} — {text[:60]}",
+                         "--dc", str(r.get("dc"))],
                         stdin=subprocess.DEVNULL, capture_output=True, text=True)
             else:
                 sys.stdout.write(
