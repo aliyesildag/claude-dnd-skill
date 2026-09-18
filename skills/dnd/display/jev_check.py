@@ -101,6 +101,38 @@ def sheet_line(campaign: str, character: str) -> str:
     return ""
 
 
+def skill_modifier(campaign: str, character: str, skill: str) -> "int | None":
+    """The character's bonus for a skill, read off their own sheet.
+
+    Arithmetic is not a judgment. The model says which check; the number behind
+    it is already written down, and reading it here keeps the two from ever
+    disagreeing.
+    """
+    root = Path(os.environ.get("DND_CAMPAIGN_ROOT", Path.home() / ".claude" / "dnd"))
+    folder = root / "campaigns" / campaign / "characters"
+    if not (campaign and character and skill and folder.is_dir()):
+        return None
+    wanted = character.strip().lower()
+    for sheet in folder.glob("*.md"):
+        try:
+            text = sheet.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        title = text.lstrip().splitlines()[0].lstrip("# ").strip().lower()
+        if wanted not in (title, sheet.stem.lower()):
+            continue
+        for line in text.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [c.strip().strip("*") for c in line.strip("|").split("|")]
+            if len(cells) >= 3 and cells[0].lower() == skill.strip().lower():
+                try:
+                    return int(cells[2].replace("+", ""))
+                except ValueError:
+                    return None
+    return None
+
+
 def resolve_name(written: str, candidates, kind: str = "kişi") -> "tuple[str, float]":
     """Map what the DM wrote onto a name the campaign knows.
 

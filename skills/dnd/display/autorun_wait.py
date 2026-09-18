@@ -96,3 +96,83 @@ if content:
         pass
 
 sys.stdout.write(content)
+
+# ── Routing (opt-in) ─────────────────────────────────────────────────────────
+# The declarations are in; the DM still has to decide which check each one is,
+# how hard, against whom, and whether it is private. Those judgments do not
+# depend on the narration, so they can be settled while the DM is still reading.
+# With --auto-dice the resulting requests reach the phones before the first
+# sentence is written, which is the gap the table actually feels.
+if "--auto-route" in sys.argv and content.strip():
+    import re
+    import concurrent.futures as _cf
+    sys.path.insert(0, DISPLAY_DIR)
+    try:
+        import jev_route
+        import jev_check
+    except ImportError:
+        jev_route = None
+
+    def _flag(name, default=""):
+        return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+
+    if jev_route:
+        scene = _flag("--scene")
+        present = [p.strip() for p in _flag("--present").split(",") if p.strip()]
+        options = [a for i, a in enumerate(sys.argv) if i and sys.argv[i - 1] == "--option"]
+        campaign = ""
+        try:
+            campaign = open(os.path.join(RT, ".campaign"), encoding="utf-8").read().strip()
+        except OSError:
+            pass
+        auto_dice = "--auto-dice" in sys.argv
+        # Above this the routing is clear enough to act on unprompted; below it
+        # the line is printed for the DM and nothing is sent.
+        floor = float(_flag("--route-floor", "0.8"))
+
+        lines = [m.groups() for m in
+                 (re.match(r"\[([^\]]+)\]:\s*(.+)", ln) for ln in content.splitlines()) if m]
+
+        def _route(pair):
+            who, text = pair
+            argv = ["--campaign", campaign or "temiz-kagit", "--character", who, "--text", text]
+            if scene:
+                argv += ["--scene", scene]
+            if present:
+                argv += ["--present", ",".join(present)]
+            for o in options:
+                argv += ["--option", o]
+            try:
+                out = subprocess.run([sys.executable, os.path.join(DISPLAY_DIR, "jev_route.py")] + argv,
+                                     capture_output=True, text=True, timeout=15)
+                return who, text, json.loads(out.stdout or "{}")
+            except Exception:
+                return who, text, {}
+
+        with _cf.ThreadPoolExecutor(max_workers=4) as pool:
+            routed = list(pool.map(_route, lines))
+
+        sys.stdout.write("\n--- yönlendirme ---\n")
+        for who, text, r in routed:
+            if not r:
+                sys.stdout.write(f"[{who}] yönlendirilemedi\n")
+                continue
+            name = r.get("karakter") or who
+            skill, conf = r.get("skill"), r.get("skill_guven") or 0.0
+            mark = "" if conf >= floor else "  (belirsiz, DM karar versin)"
+            if r.get("zar_gerekli"):
+                mod = jev_check.skill_modifier(campaign, name, skill or "")
+                sys.stdout.write(
+                    f"[{name}] {skill} {'' if mod is None else ('+' if mod >= 0 else '') + str(mod)} "
+                    f"vs DC {r.get('dc')} · hedef {r.get('hedef') or '-'} · "
+                    f"{'özel' if r.get('ozel') else 'ortak'} · dal {r.get('dal')}{mark}\n")
+                if auto_dice and conf >= floor and mod is not None:
+                    subprocess.run(
+                        [sys.executable, os.path.join(DISPLAY_DIR, "send.py"), "--dice-request",
+                         "--character", name, "--spec", "1d20", "--modifier", str(mod),
+                         "--label", f"{skill} — {text[:60]}", "--dc", str(r.get("dc"))],
+                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            else:
+                sys.stdout.write(
+                    f"[{name}] zar yok · hedef {r.get('hedef') or '-'} · "
+                    f"{'özel' if r.get('ozel') else 'ortak'} · dal {r.get('dal')}{mark}\n")
