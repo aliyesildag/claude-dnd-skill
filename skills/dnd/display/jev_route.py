@@ -186,43 +186,31 @@ def ask(state: dict, questions: dict) -> dict:
     return {"answers": answers}
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Route a player's free text into a typed DM call.")
-    ap.add_argument("--campaign", default="temiz-kagit")
-    ap.add_argument("--character", default="", help="who the display says is typing, if known")
-    ap.add_argument("--text", required=True, help="the player's declaration, verbatim")
-    ap.add_argument("--scene", default="", help="one line: where the party is and what is happening")
-    ap.add_argument("--present", default="", help="comma-separated NPCs on scene")
-    ap.add_argument("--context", action="append", default=[],
-                    help="a campaign fact the judgment needs (repeat); e.g. what a thing in the "
-                         "declaration actually is. Without it the model guesses from the word alone.")
-    ap.add_argument("--option", action="append", default=[],
-                    help="one screen option; repeat for each (the branch selector)")
-    ap.add_argument("--min-confidence", type=float, default=0.55,
-                    help="below this the answer is reported as unresolved (default 0.55)")
-    args = ap.parse_args()
+def route(text: str, campaign: str = "temiz-kagit", character: str = "", scene: str = "",
+          present=(), options=(), context=(), min_confidence: float = 0.55) -> dict:
+    """One declaration in, one typed call out.
 
-    party, cast = _campaign_names(args.campaign)
-    present = [n.strip() for n in args.present.split(",") if n.strip()]
-    # Narrow the NPC list to who is on scene when the caller says so: a shorter
-    # list of live options beats a complete list of mostly absent ones.
-    # Describe who is on scene rather than only naming them: "hangi kişiye
-    # yöneliyor" is answered by what someone is, and a bare name says nothing.
-    roles = jev_check.cast_with_roles(args.campaign)
-    npcs = {n: roles.get(n, n) for n in (present or cast)}
+    Importable so a caller routing four players at once pays for one process
+    and one interpreter, not four.
+    """
+    party, cast = _campaign_names(campaign)
+    # Describe who is on scene rather than only naming them: "which person does
+    # this address" is answered by what someone is, and a bare name says nothing.
+    roles = jev_check.cast_with_roles(campaign)
+    npcs = {n: roles.get(n, n) for n in (list(present) or cast)}
 
     state = {
-        "beyan": args.text,
-        "sahne": args.scene or "(sahne bilgisi verilmedi)",
+        "beyan": text,
+        "sahne": scene or "(sahne bilgisi verilmedi)",
         "sahnedekiler": npcs,
         "parti": party,
     }
-    if args.character:
-        state["yazan_oyuncu"] = args.character
-    if args.context:
-        state["kampanya_bilgisi"] = args.context
+    if character:
+        state["yazan_oyuncu"] = character
+    if context:
+        state["kampanya_bilgisi"] = list(context)
 
-    answers = ask(state, _questions(args.option, npcs, party)).get("answers", {})
+    answers = ask(state, _questions(list(options), npcs, party)).get("answers", {})
 
     def choice(key):
         a = answers.get(key) or {}
@@ -240,8 +228,8 @@ def main() -> None:
     zar = float((answers.get("zar_gerekli") or {}).get("noul") or 0.0)
     ozel = float((answers.get("ozel") or {}).get("noul") or 0.0)
 
-    out = {
-        "karakter": karakter if karakter_conf >= args.min_confidence else (args.character or None),
+    return {
+        "karakter": karakter if karakter_conf >= min_confidence else (character or None),
         "zar_gerekli": zar >= 0.5,
         "zar_olasilik": round(zar, 3),
         "skill": skill,
@@ -258,8 +246,29 @@ def main() -> None:
         # concentrated the distribution is, not whether the call is right, so a
         # flagged line is a prompt to decide, not an error.
         "belirsiz": [k for k, c in (("skill", skill_conf), ("hedef", hedef_conf), ("dal", dal_conf))
-                     if c < args.min_confidence],
+                     if c < min_confidence],
     }
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Route a player's free text into a typed DM call.")
+    ap.add_argument("--campaign", default="temiz-kagit")
+    ap.add_argument("--character", default="", help="who the display says is typing, if known")
+    ap.add_argument("--text", required=True, help="the player's declaration, verbatim")
+    ap.add_argument("--scene", default="", help="one line: where the party is and what is happening")
+    ap.add_argument("--present", default="", help="comma-separated NPCs on scene")
+    ap.add_argument("--context", action="append", default=[],
+                    help="a campaign fact the judgment needs (repeat); e.g. what a thing in the "
+                         "declaration actually is. Without it the model guesses from the word alone.")
+    ap.add_argument("--option", action="append", default=[],
+                    help="one screen option; repeat for each (the branch selector)")
+    ap.add_argument("--min-confidence", type=float, default=0.55,
+                    help="below this the answer is reported as unresolved (default 0.55)")
+    args = ap.parse_args()
+
+    out = route(args.text, args.campaign, args.character, args.scene,
+                [n.strip() for n in args.present.split(",") if n.strip()],
+                args.option, args.context, args.min_confidence)
     print(json.dumps(out, ensure_ascii=False, indent=2))
     sys.exit(3 if len(out["belirsiz"]) == 3 else 0)
 

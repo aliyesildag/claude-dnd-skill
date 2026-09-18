@@ -116,6 +116,30 @@ if "--auto-route" in sys.argv and content.strip():
     def _flag(name, default=""):
         return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
 
+    def _dice_request(character, modifier, label, dc):
+        """POST a dice request the way the page expects it, without a subprocess."""
+        try:
+            scheme_file = os.path.join(DISPLAY_DIR, ".scheme")
+            scheme = open(scheme_file, encoding="utf-8").read().strip() if os.path.exists(scheme_file) else "http"
+            token = open(os.path.join(RT, ".token"), encoding="utf-8").read().strip()
+        except OSError:
+            scheme, token = "http", ""
+        ctx = None
+        if scheme == "https":
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        body = json.dumps({"characters": [character], "spec": "1d20", "modifier": modifier,
+                           "advantage": "normal", "label": label, "dc": dc}).encode("utf-8")
+        req = urllib.request.Request(f"{scheme}://localhost:5001/dice-request", data=body,
+                                     method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              "X-DND-Token": token})
+        try:
+            urllib.request.urlopen(req, timeout=3, context=ctx)
+        except Exception:
+            pass
+
     if jev_route:
         scene = _flag("--scene")
         present = [p.strip() for p in _flag("--present").split(",") if p.strip()]
@@ -134,18 +158,12 @@ if "--auto-route" in sys.argv and content.strip():
                  (re.match(r"\[([^\]]+)\]:\s*(.+)", ln) for ln in content.splitlines()) if m]
 
         def _route(pair):
+            # In-process: four players used to mean four interpreters starting
+            # up to make one HTTP call each, which cost more than the calls.
             who, text = pair
-            argv = ["--campaign", campaign or "temiz-kagit", "--character", who, "--text", text]
-            if scene:
-                argv += ["--scene", scene]
-            if present:
-                argv += ["--present", ",".join(present)]
-            for o in options:
-                argv += ["--option", o]
             try:
-                out = subprocess.run([sys.executable, os.path.join(DISPLAY_DIR, "jev_route.py")] + argv,
-                                     capture_output=True, text=True, timeout=15)
-                return who, text, json.loads(out.stdout or "{}")
+                return who, text, jev_route.route(
+                    text, campaign or "temiz-kagit", who, scene, present, options)
             except Exception:
                 return who, text, {}
 
@@ -167,15 +185,11 @@ if "--auto-route" in sys.argv and content.strip():
                     f"vs DC {r.get('dc')} · hedef {r.get('hedef') or '-'} · "
                     f"{'özel' if r.get('ozel') else 'ortak'} · dal {r.get('dal')}{mark}\n")
                 if auto_dice and conf >= floor and mod is not None:
-                    subprocess.run(
-                        # --force-die: the router already settled that this is an
-                        # ability check on a d20, and asking the send-side guard
-                        # to re-derive it costs a second round trip per player.
-                        [sys.executable, os.path.join(DISPLAY_DIR, "send.py"), "--dice-request",
-                         "--force-die", "--character", name, "--spec", "1d20",
-                         "--modifier", str(mod), "--label", f"{skill} — {text[:60]}",
-                         "--dc", str(r.get("dc"))],
-                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                    # Posted straight to the endpoint rather than through
+                    # send.py: the name came from the campaign's own roster and
+                    # the die from the routing step, so every check send.py
+                    # would run here has already been answered.
+                    _dice_request(name, mod, f"{skill} — {text[:60]}", r.get("dc"))
             else:
                 sys.stdout.write(
                     f"[{name}] zar yok · hedef {r.get('hedef') or '-'} · "

@@ -59,6 +59,9 @@ def _ask(state, questions) -> dict:
         return {}
 
 
+_ROLE_CACHE: dict = {}
+
+
 def cast_with_roles(campaign: str) -> dict:
     """Campaign names mapped to what each one is, from the campaign graph.
 
@@ -66,14 +69,20 @@ def cast_with_roles(campaign: str) -> dict:
     the role, not the spelling. The graph already carries a one-line summary
     per node, which is exactly the description this judgment needs.
     """
+    if campaign in _ROLE_CACHE:
+        return _ROLE_CACHE[campaign]
     root = Path(os.environ.get("DND_CAMPAIGN_ROOT", Path.home() / ".claude" / "dnd"))
     graph = root / "campaigns" / campaign / "graph.json"
     try:
         nodes = json.loads(graph.read_text(encoding="utf-8")).get("nodes") or []
     except (OSError, ValueError):
         return {}
-    return {n["name"]: (n.get("summary") or n["name"])
-            for n in nodes if n.get("type") in ("npc", "pc") and n.get("name")}
+    roles = {n["name"]: (n.get("summary") or n["name"])
+             for n in nodes if n.get("type") in ("npc", "pc") and n.get("name")}
+    # Four players route at once against the same graph; reading and parsing it
+    # once per player is work the process can simply not do again.
+    _ROLE_CACHE[campaign] = roles
+    return roles
 
 
 def sheet_line(campaign: str, character: str) -> str:
