@@ -62,6 +62,14 @@ from paths import find_campaign as _find_campaign
 import dialogue as _dialogue
 from utf8io import read_text as _read_text
 
+# Response window — what a player may still spend after a roll has landed.
+# Optional: no module, no key, no network and the roll resolves the way it
+# always did.
+try:
+    import jev_window as _jev_window
+except Exception:
+    _jev_window = None      # type: ignore
+
 # Audio module — degrades silently if numpy not installed
 _AUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
 import sys as _sys
@@ -1151,6 +1159,186 @@ def _dice_pending_snapshot() -> list:
             {"request_id": rid, "pending": sorted(e["chars"]), "label": e["meta"].get("label", "")}
             for rid, e in _dice_pending.items() if e["chars"]
         ]
+
+
+# ─── Response window ─────────────────────────────────────────────────────────
+# A failed roll is not a resolved roll. Heroic Inspiration, Tactical Mind, a
+# held Bardic Inspiration die — all of them are spent *after* the number is
+# known, and a display that resolves the outcome the instant the die stops
+# takes that decision away from the table.
+#
+# So a roll that comes in under its DC opens a short window instead. The offers
+# come from jev_window (what is legal), the countdown is the player's, and
+# nothing downstream moves until they choose or it expires. Set the seconds to
+# 0 to switch the whole thing off.
+
+# 30 is a floor, not a preference: the window is the only thing standing
+# between a failed roll and its consequence, and a remote player talking over
+# voice needs longer to notice it than one sitting at the table. Anything
+# shorter reads as a card that flickered past. 0 switches the window off
+# entirely — that is the only way below the floor.
+try:
+    RESPONSE_WINDOW_SECONDS = int(os.environ.get("DND_RESPONSE_WINDOW_SECONDS", "45"))
+except ValueError:
+    RESPONSE_WINDOW_SECONDS = 45
+if RESPONSE_WINDOW_SECONDS != 0:
+    RESPONSE_WINDOW_SECONDS = max(30, RESPONSE_WINDOW_SECONDS)
+
+_resp_windows: dict = {}
+_resp_lock = threading.Lock()
+
+
+def _resp_snapshot() -> list:
+    """Open windows, for the on-connect burst.
+
+    A phone that reconnects mid-countdown has to get its buttons back; the
+    window is the one piece of display state where a dropped frame costs the
+    player the decision.
+    """
+    now = _time.time()
+    with _resp_lock:
+        return [dict(w, remaining=max(0.0, round(w["expires_at"] - now, 1)))
+                for w in _resp_windows.values() if w["expires_at"] > now]
+
+
+def _party_inspiration() -> "tuple[list, dict]":
+    """Who is at the table, and which of them is holding Heroic Inspiration.
+
+    Both come off the stats the display already keeps, so the window never
+    offers a reroll to someone who has nothing to spend.
+    """
+    with _stats_lock:
+        players = list(_current_stats.get("players", []))
+    names = [p.get("name", "") for p in players if p.get("name")]
+    held = {p.get("name", ""): bool(p.get("inspiration")) for p in players if p.get("name")}
+    return names, held
+
+
+def _open_response_window(roller: str, meta: dict, total: int, request_id: str) -> None:
+    """Work out the offers and broadcast the window. Runs off the request thread.
+
+    The phone is mid-animation when this starts: the roll result has already
+    gone back over HTTP, and the window arrives a beat later. From the second
+    time a feature is seen it comes out of jev_window's cache, so that beat is
+    usually the SSE hop alone.
+    """
+    if _jev_window is None or RESPONSE_WINDOW_SECONDS <= 0:
+        return
+    dc = meta.get("dc")
+    if not isinstance(dc, int) or total >= dc:
+        return                      # nothing to rescue
+    try:
+        campaign = open(CAMP_FILE, encoding="utf-8").read().strip()
+    except Exception:
+        campaign = ""
+    if not campaign:
+        return
+
+    present, held = _party_inspiration()
+    if roller not in present:
+        present = present + [roller]
+    started = _time.time()
+    try:
+        offers = _jev_window.offers(
+            campaign, roller, present,
+            _jev_window.roll_kind(meta.get("label", "")),
+            passed=False, inspiration=held)
+    except Exception:
+        return
+    if not offers:
+        return
+    # Working out the offers took longer than the window would have lasted, so
+    # the table has already moved on. Opening now would interrupt the narration
+    # rather than precede it.
+    if _time.time() - started > RESPONSE_WINDOW_SECONDS:
+        return
+
+    window = {
+        "window_id": secrets.token_hex(6),
+        "roller": roller,
+        "label": meta.get("label", ""),
+        "total": total,
+        "dc": dc,
+        "spec": meta.get("spec", "1d20"),
+        "modifier": int(meta.get("modifier", 0) or 0),
+        "advantage": meta.get("advantage", "normal"),
+        "request_id": request_id,
+        "offers": offers,
+        "seconds": RESPONSE_WINDOW_SECONDS,
+        "expires_at": _time.time() + RESPONSE_WINDOW_SECONDS,
+    }
+    with _resp_lock:
+        _resp_windows[window["window_id"]] = window
+    _broadcast({"response_window": dict(window, remaining=float(RESPONSE_WINDOW_SECONDS))})
+
+    def _expire():
+        _time.sleep(RESPONSE_WINDOW_SECONDS + 0.5)
+        _close_response_window(window["window_id"], "timeout")
+
+    threading.Thread(target=_expire, daemon=True).start()
+
+
+def _close_response_window(window_id: str, reason: str, note: str = "") -> "dict | None":
+    """Close a window once. Returns the window if this call is the one that closed it."""
+    with _resp_lock:
+        window = _resp_windows.pop(window_id, None)
+    if window is None:
+        return None
+    _broadcast({"response_window_closed": {"window_id": window_id, "reason": reason,
+                                           "note": note}})
+    # Nobody spent, so the number the DM already saw is the final one. Say so
+    # anyway: under this flow the DM narrated the attempt and is waiting to be
+    # told how it ended, and "nothing happened" is an answer they need.
+    if reason in ("timeout", "passed"):
+        dc = window.get("dc")
+        verdict = (f" vs DC {dc} — {'geçti' if window['total'] >= dc else 'kaldı'}"
+                   if isinstance(dc, int) else "")
+        _resolve_outcome(f"{window['roller']} — {window['total']}{verdict} "
+                         f"(kimse bir şey harcamadı)")
+    return window
+
+
+OUTCOME_FILE = rt(".roll_outcomes")
+_outcome_lock = threading.Lock()
+
+
+def _resolve_outcome(text: str) -> None:
+    """The last word on a roll that went through a window.
+
+    The DM is released the moment the die lands, so under this table's flow
+    they narrate the *attempt* and leave the outcome open. This is the line
+    that closes it: on the feed for the table, and queued for the DM's next
+    turn, because the spend usually lands after the narration is already
+    written.
+
+    It is a separate file from `.input_queue` on purpose — that one is the
+    players' declarations and is rewritten wholesale when a turn is staged.
+    """
+    _feed_line(text)
+    try:
+        with _outcome_lock:
+            with open(OUTCOME_FILE, "a", encoding="utf-8") as f:
+                f.write(text.rstrip() + "\n")
+    except OSError:
+        pass
+
+
+def _feed_line(text: str) -> None:
+    """Put a line on the feed the way send.py would, so it survives replay."""
+    entry = {"text": text}
+    try:
+        camp = open(CAMP_FILE, encoding="utf-8").read().strip()
+        if camp:
+            entry["_camp"] = camp
+    except Exception:
+        pass
+    with _text_log_lock:
+        _text_log.append(entry)
+    with _tail_lock:
+        _tail_buffer.append(entry)
+    _persist_log()
+    _persist_tail()
+    _broadcast({"text": text})
 
 
 def _load_input_queue() -> None:
@@ -2592,6 +2780,19 @@ def player_dice():
     label     = re.sub(r"[`\\$]", "", str(data.get("label", ""))[:60]).strip()
     req_id    = str(data.get("request_id", "")).strip()[:24]
 
+    # A prescribed roll's die is the server's, not the pad's. The pad locks
+    # itself to the last die it was told to roll and a stale page can submit
+    # that one under the new label — which is how a Tactical Mind d10 went out
+    # as a d20, correct-looking in the log and wrong at the table. The request
+    # already says which die was asked for, so no client is trusted to agree.
+    corrected_from = ""
+    if req_id:
+        with _dice_pending_lock:
+            _entry = _dice_pending.get(req_id)
+            _want = (_entry or {}).get("meta", {}).get("spec", "")
+        if _want and _want != spec:
+            corrected_from, spec = spec, _want
+
     m = re.fullmatch(r"(\d{1,2})d(\d{1,3})", spec)
     if not m:
         return jsonify({"error": "bad spec"}), 400
@@ -2623,6 +2824,8 @@ def player_dice():
     if modifier:
         breakdown += f" {mod_str}"
     suffix = f" — {label}" if label else ""
+    if corrected_from:
+        suffix += f" (istenen zar {spec}; ekran {corrected_from} göndermişti)"
     text   = f"{character} rolls {spec}{mod_str}: {breakdown} = {total}{suffix}"
 
     payload   = {"text": text, "dice": True}
@@ -2645,6 +2848,7 @@ def player_dice():
     # Correlate against any pending DM request. Case-insensitive match on the
     # character name — drop them from the request's expected-rollers set.
     pending_changed = False
+    window_meta = None
     if req_id:
         with _dice_pending_lock:
             entry = _dice_pending.get(req_id)
@@ -2654,10 +2858,37 @@ def player_dice():
                 if matched is not None:
                     entry["chars"].discard(matched)
                     pending_changed = True
+                    window_meta = dict(entry["meta"])
                     if not entry["chars"]:
                         _dice_pending.pop(req_id, None)
     if pending_changed:
         _broadcast({"dice_pending": _dice_pending_snapshot()})
+
+    # A bonus die is not a result, it is an addend, and a reroll replaces the
+    # number the DM already saw. Either way the table needs one authoritative
+    # line — and so does the DM, who under this flow narrated only the attempt.
+    outcome_for = (window_meta or {}).get("outcome_for")
+    if outcome_for:
+        base = int(outcome_for.get("total", 0))
+        dc_b = outcome_for.get("dc")
+        who_o = outcome_for.get("roller", character)
+        feat = outcome_for.get("feature", "ek zar")
+        if outcome_for.get("mode") == "yeniden":
+            final, sum_text = total, f"{base} yerine {total}"
+        else:
+            final, sum_text = base + total, f"{base} + {total} = {base + total}"
+        verdict = ""
+        if isinstance(dc_b, int):
+            verdict = f" vs DC {dc_b} — {'geçti' if final >= dc_b else 'yine kaldı'}"
+        _resolve_outcome(f"{who_o} — {feat}: {sum_text}{verdict}")
+
+    # The roll is on the feed and the phone has its number; now give the player
+    # the seconds the rules already give them. Off the request thread, so the
+    # slot-machine animation is never waiting on a judgment.
+    if window_meta and not window_meta.get("no_window"):
+        threading.Thread(
+            target=_open_response_window,
+            args=(character, window_meta, total, req_id), daemon=True).start()
 
     return jsonify({
         "character": character,
@@ -2672,6 +2903,57 @@ def player_dice():
         "text": text,
         "request_id": req_id or None,
     }), 200
+
+
+def _issue_dice_request(chars: list, spec: str, modifier: int, adv: str, label: str,
+                        dc_val: "int | None", no_window: bool = False,
+                        bonus_for: "dict | None" = None) -> "tuple[str, list]":
+    """Register a dice request and put it on the wire.
+
+    Split out of the endpoint because the response window issues rerolls and
+    bonus dice itself, and a window's follow-up has to reach the phones by the
+    same path the DM's own request does — same pending entry, same payload,
+    same replay on reconnect.
+    """
+    request_id = secrets.token_hex(6)
+
+    # Only register pending entries for explicit named targets. "any" is fire-and-forget.
+    trackable = [c for c in chars if c.lower() != "any"]
+    if trackable:
+        with _dice_pending_lock:
+            _dice_pending[request_id] = {
+                "chars": set(trackable),
+                "meta": {"spec": spec, "modifier": modifier, "advantage": adv, "label": label,
+                         "dc": dc_val,
+                         # A roll issued *by* a response window does not get a
+                         # window of its own: a reroll the player already paid
+                         # for is the answer, not a new question.
+                         "no_window": bool(no_window),
+                         # Set when this roll finishes an earlier one: a bonus
+                         # die to add, or a reroll that replaces it. Carries
+                         # what it resolves, because a d10 on its own line
+                         # answers nothing.
+                         "outcome_for": bonus_for},
+                "started_at": _time.time(),
+            }
+        _broadcast({"dice_pending": _dice_pending_snapshot()})
+
+    # Targets with no live phone bound → the main display should roll on-screen.
+    onscreen_targets = [c for c in chars if c.lower() != "any" and not _phone_present(c)]
+    _broadcast({
+        "dice_request": {
+            "request_id": request_id,
+            "characters": chars,
+            "character": chars[0] if len(chars) == 1 else "any",   # legacy single-target field
+            "onscreen_targets": onscreen_targets,
+            "spec": spec,
+            "modifier": modifier,
+            "advantage": adv,
+            "label": label,
+            "dc": dc_val,
+        }
+    })
+    return request_id, trackable
 
 
 @app.route("/dice-request", methods=["POST"])
@@ -2714,35 +2996,8 @@ def dice_request():
     modifier = max(-100, min(100, modifier))
     dc_val   = int(dc) if isinstance(dc, (int, float)) else None
 
-    request_id = secrets.token_hex(6)
-
-    # Only register pending entries for explicit named targets. "any" is fire-and-forget.
-    trackable = [c for c in chars if c.lower() != "any"]
-    if trackable:
-        with _dice_pending_lock:
-            _dice_pending[request_id] = {
-                "chars": set(trackable),
-                "meta": {"spec": spec, "modifier": modifier, "advantage": adv, "label": label, "dc": dc_val},
-                "started_at": time.time(),
-            }
-        _broadcast({"dice_pending": _dice_pending_snapshot()})
-
-    # Targets with no live phone bound → the main display should roll on-screen.
-    onscreen_targets = [c for c in chars if c.lower() != "any" and not _phone_present(c)]
-    payload = {
-        "dice_request": {
-            "request_id": request_id,
-            "characters": chars,
-            "character": chars[0] if len(chars) == 1 else "any",   # legacy single-target field
-            "onscreen_targets": onscreen_targets,
-            "spec": spec,
-            "modifier": modifier,
-            "advantage": adv,
-            "label": label,
-            "dc": dc_val,
-        }
-    }
-    _broadcast(payload)
+    request_id, trackable = _issue_dice_request(
+        chars, spec, modifier, adv, label, dc_val, bool(data.get("no_window")))
     return jsonify({
         "request_id": request_id,
         "pending": sorted(trackable),
@@ -2781,6 +3036,105 @@ def dice_request_cancel(request_id):
         _dice_pending.pop(request_id, None)
     _broadcast({"dice_pending": _dice_pending_snapshot(), "dice_request_cancelled": request_id})
     return "", 204
+
+
+def _spend_inspiration(name: str) -> None:
+    """Clear the Heroic Inspiration flag the display keeps for a character.
+
+    The window offered it because this counter said they were holding it, so
+    the same counter is what has to come down when they spend it — otherwise
+    the next failed roll offers a reroll they no longer have.
+    """
+    snapshot = None
+    with _stats_lock:
+        match = next((p for p in _current_stats.get("players", [])
+                      if p.get("name", "").lower() == name.lower()), None)
+        if match and match.get("inspiration"):
+            match["inspiration"] = False
+            snapshot = dict(_current_stats)
+    if snapshot is not None:
+        _persist_stats()
+        _broadcast({"stats": snapshot})
+
+
+@app.route("/response-window/<window_id>/spend", methods=["POST"])
+def response_window_spend(window_id):
+    """A player spends something on the roll that just landed.
+
+    Body: {"offer_id": "...", "character": "Dilaver"}
+
+    Closes the window, announces the spend on the feed so the DM narrates
+    against it, drops the resource the display owns, and issues whatever roll
+    the feature calls for.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    data = request.get_json(force=True, silent=True) or {}
+    offer_id = str(data.get("offer_id", "")).strip()[:120]
+    who      = str(data.get("character", "")).strip()[:60]
+
+    with _resp_lock:
+        window = _resp_windows.get(window_id)
+        offer = next((o for o in window["offers"] if o["id"] == offer_id), None) if window else None
+    if window is None:
+        return jsonify({"error": "window closed"}), 409
+    if offer is None:
+        return jsonify({"error": "unknown offer"}), 404
+    # The offer belongs to one character's sheet; another phone cannot spend it.
+    if who and who.lower() != offer["character"].lower():
+        return jsonify({"error": "not your offer"}), 403
+    if _time.time() > window["expires_at"]:
+        _close_response_window(window_id, "timeout")
+        return jsonify({"error": "too late"}), 409
+
+    if _close_response_window(window_id, "spent", note=f"{offer['character']}: {offer['feature']}") is None:
+        return jsonify({"error": "window closed"}), 409
+
+    _feed_line(f"{offer['character']} — {offer['feature']} kullanıyor "
+               f"({window['roller']}, {window['total']} vs DC {window['dc']}).")
+    if offer.get("kaynak") == "heroic_inspiration":
+        _spend_inspiration(offer["character"])
+
+    follow = _jev_window.follow_up(offer.get("etki", ""), window["spec"],
+                                   window["modifier"], window["advantage"]) if _jev_window else None
+    issued = None
+    if follow:
+        # A reroll replaces the roller's own d20; an extra die is rolled by
+        # whoever owns the feature, because it is their die.
+        target = window["roller"] if follow["kind"] == "yeniden" else offer["character"]
+        label = (f"{window['label']} (yeniden)" if follow["kind"] == "yeniden"
+                 else f"{offer['feature']} — ek zar")
+        issued, _ = _issue_dice_request(
+            [target], follow["spec"], follow["modifier"], follow["advantage"],
+            label[:60], window["dc"] if follow["kind"] == "yeniden" else None,
+            no_window=True,
+            # Both kinds resolve the original roll — one replaces its number,
+            # the other adds to it — so both carry what they are finishing.
+            bonus_for={"mode": follow["kind"], "total": window["total"],
+                       "dc": window["dc"], "roller": window["roller"],
+                       "feature": offer["feature"]})
+    return jsonify({"ok": True, "follow_up_request": issued}), 200
+
+
+@app.route("/response-window/<window_id>/pass", methods=["POST"])
+def response_window_pass(window_id):
+    """Nobody is spending — close the window now instead of waiting it out.
+
+    Only the player who rolled can give the seconds back (the DM screen, which
+    binds no character, can too). An ally holding an offer must not be able to
+    end someone else's decision early.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    who = str((request.get_json(force=True, silent=True) or {}).get("character", "")).strip()
+    with _resp_lock:
+        window = _resp_windows.get(window_id)
+    if window is None:
+        return jsonify({"ok": False}), 409
+    if who and who.lower() != window["roller"].lower():
+        return jsonify({"error": "not your window"}), 403
+    closed = _close_response_window(window_id, "passed")
+    return jsonify({"ok": closed is not None}), 200
 
 
 def _fold_name(name: str) -> str:
@@ -3178,6 +3532,12 @@ def _initial_payloads(emit, char: str = "") -> None:
             "label": meta.get("label", ""),
             "dc": meta.get("dc"),
         }})
+
+    # Replay any open response window. A phone that reloaded during the
+    # countdown has to get its buttons back — the window is seconds long and
+    # there is no second chance at it.
+    for w in _resp_snapshot():
+        _emit({"response_window": w})
 
     # Replay autorun cycle so reconnecting clients resume the countdown from correct elapsed position.
     with _autorun_cycle_lock:

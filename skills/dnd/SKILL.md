@@ -298,6 +298,18 @@ Roll handling is chosen at game start and stored as `roll_mode` in `state.md →
     The roll routes to that PC's **phone** if one is bound, or **auto-opens the on-screen Dice drawer** on the shared screen when no phone is bound (or the display's *Roll on screen* setting is on) — the same roller either way. `--wait` blocks until the player rolls and then prints their result for you to resolve (it exits non-zero on timeout — fall back to asking out loud). When the display is **not** running, just call for the roll verbally and wait. Never roll the PC yourself under `players`.
 - **`roll_mode: auto` — you roll everything openly.** Resolve PC d20s yourself via `dice.py` and show full math inline (`Piper — Perception: d20+5 = 18 → …`), no waiting. For solo / fast play.
 
+**A failed roll is not resolved yet — narrate the attempt, not the outcome.**
+
+When the display is running, a PC d20 that comes in under its DC opens a short **response window** on every screen: the player can still spend Heroic Inspiration, Tactical Mind, a held Bardic Inspiration die or anything else their sheet allows. `--wait` returns as soon as the die lands, which is *before* that decision is made.
+
+So when a roll you prescribed with a `--dc` comes back **under the DC**:
+
+- Narrate the **attempt** and stop there — the reach, the strain, the moment of doubt. Do not say whether it worked, do not apply a consequence, do not advance the scene past it.
+- Never restate the failure as settled ("izi bulamadın", "kayıp düşüyorsun"). It may not be a failure by the time the player is done.
+- The outcome arrives at the **start of your next turn**, as a `[[Önceki turda açık kalan atışlar kapandı…]]` directive listing the final number and whether it cleared the DC. Open that turn by resolving it, then carry on.
+
+A roll that **meets or beats** its DC opens no window — resolve it immediately as usual. The window also never opens when the display is off, when no DC was given, or when the player has nothing left to spend.
+
 **Initiative** is always DM-rolled via `combat.py init` for all combatants (PCs and NPCs) regardless of `roll_mode`.
 
 **Per-player override:** a player can flip their own PC via the phone Settings → *Rolls* toggle. When that player has a queued action, `check_input.py` prepends a `[[<Char> roll mode: auto|players]]` directive — honor it for that character, overriding the campaign default. Precedence: **per-character directive > campaign `roll_mode`**.

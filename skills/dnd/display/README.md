@@ -194,6 +194,27 @@ Enable autorun:
 
 **Player Settings (phone):** each device has a Settings view with a **Text Size** stepper (per-browser font scaling, anti-FOUC), a **Narration** length slider (250–2500 words → `POST /narration-pref`, surfaced to the DM as a `[[Narration length…]]` directive), and — when the device is bound to a PC — a **Rolls** toggle that flips that character between players-roll and DM-auto-roll (`POST /roll-pref`, surfaced as a `[[<Char> roll mode: …]]` directive). See the main README's [Dice & Roll Handling](../../../README.md#dice--roll-handling).
 
+### Response window (failed rolls)
+
+A roll that misses its DC does not resolve straight away. A card opens for a few seconds with everything the table may still legally spend on it — Heroic Inspiration, Tactical Mind, anything else the sheets carry — and nothing moves until a player taps one or the countdown runs out. Spending announces itself on the feed, drops the resource the display tracks, and issues the reroll or bonus die automatically.
+
+Which features qualify is decided by `jev_window.py`, one judgment per feature against the sheet's own words, asked about legality only: the kind of roll, whether it failed, and whether the holder is the one who rolled. Because the question never mentions the specific roll, the answers cache — the first window on a new feature costs a call, every one after that opens off disk.
+
+Two things stay in code rather than being asked: whether the character is currently holding Heroic Inspiration (the display already tracks it, so a spent one is never offered), and which die a follow-up rolls.
+
+```
+# see what a given roll would offer, without playing it
+python3 jev_window.py --campaign temiz-kagit --roller Dilaver \
+    --present "Dilaver,Hisrayt" --label "Survival — izi sürüyorum" \
+    --failed --inspiration Dilaver
+```
+
+Seconds are set with `DND_RESPONSE_WINDOW_SECONDS`; `0` switches the window off. The default is 45 and 30 is a floor — anything shorter reads as a card that flickered past, and a remote player talking over voice needs longer to notice it than one sitting at the table.
+
+**The DM does not wait for the window.** `--wait` returns when the die lands, so the narration describes the *attempt* and stops. When the window resolves — spent or timed out — the display writes one authoritative line to the feed and to `.roll_outcomes`, and `check_input.py` hands it to the DM at the start of the next turn as a `[[Önceki turda açık kalan atışlar kapandı…]]` directive. A reroll reports `7 yerine 17`; a bonus die reports `7 + 5 = 12`; nobody spending reports the original total. The convention is written up in the skill's dice section.
+
+After a level-up, run the CLI above for the changed character and check that the new abilities are listed. The cache keys on the feature's text, so new and edited features are re-asked automatically — what needs a human is confirming Jev read them the way the rules do. With no API key, no network, or no `jev_window.py`, rolls resolve exactly as they did before. The DM screen — which binds no character — can press any offer, which is how a player with no phone still gets their feature.
+
 ### DM Help button
 
 The ◈ button in the top-right corner fires a one-shot hint from `dm_help.py` — a single `--tutor` block appears in the feed with a tactical suggestion for the current situation. This is separate from tutor mode (`/dnd tutor on`) which appends hints to every response.

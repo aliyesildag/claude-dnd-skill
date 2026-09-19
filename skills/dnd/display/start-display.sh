@@ -16,6 +16,11 @@ export PYTHONUTF8=1
 # provider() prefers Azure whenever its key is still on disk. Pin the choice
 # here so a leftover azure-tts.key cannot silently take the table back.
 export DND_TTS_PROVIDER="${DND_TTS_PROVIDER:-gemini}"
+# Seconds a failed roll waits before it resolves, so the player can still spend
+# Heroic Inspiration, Tactical Mind or a held die on it. This table plays
+# remote and talks over voice, so the decision needs longer than the 15s the
+# code defaults to. 0 turns the window off.
+export DND_RESPONSE_WINDOW_SECONDS="${DND_RESPONSE_WINDOW_SECONDS:-45}"
 
 DISPLAY_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG="$DISPLAY_DIR/app.log"               # process log — recreated each launch

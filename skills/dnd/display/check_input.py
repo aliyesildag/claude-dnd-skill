@@ -29,6 +29,7 @@ if hasattr(sys.stdout, "reconfigure"):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from runtime_paths import rt          # writable runtime dir (update-safe)
 QUEUE_FILE = rt(".input_queue")
+OUTCOME_FILE = rt(".roll_outcomes")   # written by the display when a response window resolves
 NARRATION_TARGET = rt("narration_target")  # set by the display's Narration slider
 ROLL_PREFS = rt("roll_prefs.json")         # per-character roll overrides (Settings → Rolls)
 
@@ -61,15 +62,43 @@ def _roll_directives():
     return ""
 
 
+def _roll_outcomes():
+    """Rolls that finished after the DM had already been released.
+
+    A failed roll opens a response window, but the DM is freed the moment the
+    die lands — so the narration describes the attempt and the spend arrives
+    afterwards. These lines are how the outcome gets back: read once, at the
+    start of the next turn, and cleared.
+    """
+    try:
+        if not os.path.exists(OUTCOME_FILE):
+            return ""
+        with open(OUTCOME_FILE, encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+        os.remove(OUTCOME_FILE)
+        if not lines:
+            return ""
+        body = "\n".join(f"  - {ln}" for ln in lines)
+        return ("[[Önceki turda açık kalan atışlar kapandı. Anlatımda bunların "
+                f"sonucunu ver:\n{body}]]")
+    except Exception:
+        return ""
+
+
 try:
+    outcomes = _roll_outcomes()
+    content = ""
     if os.path.exists(QUEUE_FILE):
         with open(QUEUE_FILE, encoding="utf-8") as f:
             content = f.read().strip()
         os.remove(QUEUE_FILE)
+    # An outcome is worth a turn on its own: the table is waiting to hear how
+    # the roll ended, even if nobody has declared their next move yet.
+    if content or outcomes:
+        for d in (outcomes, _roll_directives(), _narration_directive()):
+            if d:
+                print(d)
         if content:
-            for d in (_roll_directives(), _narration_directive()):
-                if d:
-                    print(d)
             print(content)
 except Exception:
     pass

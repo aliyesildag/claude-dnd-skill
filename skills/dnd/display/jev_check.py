@@ -43,7 +43,7 @@ def _key() -> str:
         return ""
 
 
-def _ask(state, questions) -> dict:
+def _ask(state, questions, timeout: "int | None" = None) -> dict:
     key = _key()
     if not key:
         return {}
@@ -53,10 +53,28 @@ def _ask(state, questions) -> dict:
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8")).get("answers", {})
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return {}
+
+
+def fold(name: str) -> str:
+    """Fold a character name to a comparable key.
+
+    `str.lower()` is not enough on this table's names: "KIZIL ZENCI" lowers to
+    `kizil zenci` while the sheet's own "Kızıl Zenci" lowers to `kızıl zenci`,
+    and the two never match. A sheet that fails to resolve here is silent — no
+    modifier, no offers, no window, and nothing saying why — so the comparison
+    maps the letters that carry diacritics to their base form first. Mirrors
+    `_fold_name` in the display app, which solves the same problem for the
+    display's own lookups.
+    """
+    table = str.maketrans({
+        "ı": "i", "İ": "i", "I": "i", "ğ": "g", "Ğ": "g", "ş": "s", "Ş": "s",
+        "ö": "o", "Ö": "o", "ü": "u", "Ü": "u", "ç": "c", "Ç": "c", "â": "a", "î": "i", "û": "u",
+    })
+    return name.translate(table).lower().strip()
 
 
 _ROLE_CACHE: dict = {}
@@ -95,14 +113,14 @@ def sheet_line(campaign: str, character: str) -> str:
     folder = root / "campaigns" / campaign / "characters"
     if not (campaign and character and folder.is_dir()):
         return ""
-    wanted = character.strip().lower()
+    wanted = fold(character)
     for sheet in folder.glob("*.md"):
         try:
             text = sheet.read_text(encoding="utf-8")
         except OSError:
             continue
-        title = text.lstrip().splitlines()[0].lstrip("# ").strip().lower()
-        if wanted not in (title, sheet.stem.lower()):
+        title = fold(text.lstrip().splitlines()[0].lstrip("# "))
+        if wanted not in (title, fold(sheet.stem)):
             continue
         bits = [ln.strip("- ").strip() for ln in text.splitlines()
                 if ln.startswith("- **Race:**") or ln.startswith("- **Hit Dice:**")]
@@ -121,14 +139,14 @@ def skill_modifier(campaign: str, character: str, skill: str) -> "int | None":
     folder = root / "campaigns" / campaign / "characters"
     if not (campaign and character and skill and folder.is_dir()):
         return None
-    wanted = character.strip().lower()
+    wanted = fold(character)
     for sheet in folder.glob("*.md"):
         try:
             text = sheet.read_text(encoding="utf-8")
         except OSError:
             continue
-        title = text.lstrip().splitlines()[0].lstrip("# ").strip().lower()
-        if wanted not in (title, sheet.stem.lower()):
+        title = fold(text.lstrip().splitlines()[0].lstrip("# "))
+        if wanted not in (title, fold(sheet.stem)):
             continue
         for line in text.splitlines():
             if not line.startswith("|"):
