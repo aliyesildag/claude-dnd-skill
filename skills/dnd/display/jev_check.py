@@ -17,6 +17,7 @@ own answer. A guard that blocks a session because a service is down is worse
 than the mistake it prevents.
 """
 import json
+import re
 import os
 import urllib.error
 import urllib.request
@@ -197,13 +198,34 @@ def resolve_name(written: str, candidates, kind: str = "kişi") -> "tuple[str, f
     return name, conf
 
 
+# Rolls whose die comes from a weapon or a spell rather than from what kind of
+# check it is. The guard has nothing to say about these: it reasons from the
+# label to a die, and "Çelik kılıç — hasar" is a d8 only because Dilaver's sheet
+# says so. Asked anyway it answers d20, because the label reads like an attack.
+_NOT_A_CHECK = re.compile(
+    r"\bhasar\b|\bdamage\b|\bdmg\b|\biyile[şs]tirme\b|\bheal(ing)?\b|\bcure\b|\bşifa\b",
+    re.I)
+
+
+def is_check_roll(label: str) -> bool:
+    """False for a damage or healing roll — the kind this guard cannot judge."""
+    return not _NOT_A_CHECK.search(label or "")
+
+
 def check_dice(label: str, spec: str, character: str = "", sheet: str = "") -> "tuple[bool, str, float]":
     """Does this die fit what the roll is for?
 
     Returns (ok, expected_spec, confidence). `ok` is False only when the guard
     is confident the die is wrong; anything softer leaves the call alone.
+
+    Only d20-style rolls are judged. A damage die is set by the weapon in hand,
+    which this function never sees, so refusing one would teach the DM to pass
+    --force-die by reflex — and a guard that is routinely overridden stops
+    guarding the rolls it was written for.
     """
     if not label.strip() or not spec.strip():
+        return True, "", 0.0
+    if not is_check_roll(label):
         return True, "", 0.0
     dice = {
         "1d20": "Yetenek testi, saldırı, saving throw, initiative. Belirsiz sonucu olan her test.",
