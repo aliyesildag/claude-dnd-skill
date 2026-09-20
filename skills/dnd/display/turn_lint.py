@@ -63,7 +63,8 @@ PRIVATE_WINDOW = 12
 # Per-question bars, from a calibration pass over hand-written lines. The leak
 # question separates cleanly (0.07 clean vs 0.48–0.63 leaking) but sits lower
 # than the others; log-only means a lower bar costs a log line, not a turn.
-JEV_MIN = {"sonuc_imasi": 0.60, "bilgi_sizintisi": 0.45, "roman_registeri": 0.55}
+JEV_MIN = {"sonuc_imasi": 0.60, "bilgi_sizintisi": 0.45, "roman_registeri": 0.55,
+           "tahtada_hareket": 0.55}
 # Turkish is compact; the register of a line shows well before 25 words.
 REGISTER_MIN_WORDS = 12
 
@@ -99,17 +100,21 @@ def _kind(entry: dict) -> str:
 class Linter:
     """One per display process. Fed by /chunk and the dice paths, writes a log."""
 
-    def __init__(self, campaign_dir_for, party_names, turn_active, ask=None) -> None:
+    def __init__(self, campaign_dir_for, party_names, turn_active, ask=None,
+                 board_tokens=None) -> None:
         # Callables rather than values: the campaign can change under a running
         # display, and the party and the turn order change every fight.
         self._campaign_dir_for = campaign_dir_for   # (campaign) -> Path
         self._party_display = party_names           # () -> set[str], as the sheet spells them
         self._party_names = lambda: {_fold(n) for n in party_names()}   # for matching
         self._turn_active = turn_active             # () -> bool
+        # () -> list[str]: the names on the board right now, [] when none is open.
+        self._board_tokens = board_tokens or (lambda: [])
         self._ask = ask or (getattr(_jev, "_ask", None))
         self._lock = threading.Lock()
         self._open: dict = {}                       # request_id → {ts, character, dc, label}
         self._private: list = []                    # recent (ts, to, text)
+        self._moved: set = set()                    # tokens written since the last narration
         self._flags_cache: dict = {}                # campaign → (mtime, flags)
 
     # ── what the server tells us ──────────────────────────────────────────
@@ -119,6 +124,12 @@ class Linter:
             self._open[request_id] = {"ts": _now(), "characters": list(characters or []),
                                       "dc": dc if isinstance(dc, int) else None,
                                       "label": label or ""}
+
+    def note_moved(self, names) -> None:
+        """Positions the DM just wrote. Cleared once a narration has been checked
+        against them, so a move always answers for the turn it belongs to."""
+        with self._lock:
+            self._moved.update(_fold(n) for n in names if n)
 
     def note_resolved(self, request_id: str) -> None:
         with self._lock:
@@ -214,6 +225,19 @@ class Linter:
                             "excerpt": _excerpt(text)})
         return out
 
+    def _unmoved_tokens(self) -> "list[str]":
+        """Everyone on the board whose position the DM has not written this turn.
+
+        Deliberately not filtered by whether the narration names them. A DM
+        writes "the other goblin", "the one by the door", "it" — almost never
+        the token's label — so matching on the name asks the question only in
+        the cases nobody gets wrong. The list goes to Jev instead, which is
+        where deciding who a sentence is about belongs.
+        """
+        with self._lock:
+            moved = set(self._moved)
+        return [t for t in self._board_tokens() if _fold(t) not in moved]
+
     # ── the judgment tier ─────────────────────────────────────────────────
 
     def judgment_questions(self, entry: dict) -> "tuple[dict, dict]":
@@ -289,6 +313,28 @@ class Linter:
                 },
             }
 
+        unmoved = self._unmoved_tokens() if kind == "narration" else []
+        if unmoved:
+            state["tahtada_duranlar"] = unmoved
+            q["tahtada_hareket"] = {
+                "type": "noul",
+                "instructions": (
+                    "Savaş bir ızgara üzerinde ve `tahtada_duranlar` listesindeki "
+                    "tokenların konumu bu turda değiştirilmedi. `anlatim` bunlardan "
+                    "birinin YER DEĞİŞTİRDİĞİNİ söylüyor mu? Anlatım onları adıyla "
+                    "anmayabilir — 'öteki goblin', 'kapıdaki', 'o' hepsi olabilir."),
+                "criteria": {
+                    "true": ("Anlatım bir kareden başka bir kareye geçişi anlatıyor: "
+                             "koşuyor, geri çekiliyor, yaklaşıyor, dalıyor, arkasına "
+                             "geçiyor — ve **bir adım geri atmak da buna dahildir**, "
+                             "çünkü bir adım 5 ft, yani bir kare. Aradaki mesafeyi "
+                             "değiştiren her şey."),
+                    "false": ("Yer değiştirme yok: duruyor, bakıyor, konuşuyor, "
+                              "saldırıyor, irkiliyor, silahını kaldırıyor. Yerinde "
+                              "kalarak yapılan her şey."),
+                },
+            }
+
         if kind == "narration" and _words(text) >= REGISTER_MIN_WORDS:
             q["roman_registeri"] = {
                 "type": "noul",
@@ -306,8 +352,11 @@ class Linter:
             }
         return (state, q) if q else ({}, {})
 
-    def judgment_findings(self, entry: dict) -> list:
-        state, questions = self.judgment_questions(entry)
+    def judgment_findings(self, entry: dict, asked=None) -> list:
+        """`asked` is a (state, questions) pair built earlier — the caller does
+        that on the request thread, because the state it reads (which tokens
+        are still unwritten) is about to be reset for the next narration."""
+        state, questions = asked if asked is not None else self.judgment_questions(entry)
         if not questions or self._ask is None:
             return []
         answers = self._ask(state, questions, timeout=8) or {}
@@ -319,6 +368,7 @@ class Linter:
         if source == "npc" and "bilgi_sizintisi" in answers:
             answers.pop("bilgi_sizintisi")
         labels = {
+            "tahtada_hareket": "anlatımda yer değiştirme var, tahtada yok",
             "sonuc_imasi": "zar düşmeden sonuç ima edildi",
             "bilgi_sizintisi": "özel satırdaki bilgi herkese açık kullanıldı",
             "roman_registeri": "anlatım konuşma değil sayfa gibi",
@@ -356,21 +406,28 @@ class Linter:
             # A private line is knowledge, not a violation — file it and stop.
             self._remember_private(to, str(entry.get("text") or ""))
         findings = self.pattern_findings(entry, campaign)
+        # Build the questions here, while the turn's state is still the turn's:
+        # the reset below is what makes the next narration answer for itself,
+        # and a thread that asked afterwards would always see an empty board.
+        asked = self.judgment_questions(entry) if self._ask is not None else None
+        if _kind(entry) == "narration" and not to:
+            with self._lock:
+                self._moved.clear()
         if findings:
             self._write(campaign, findings, entry)
         if sync:
-            more = self.judgment_findings(entry)
+            more = self.judgment_findings(entry, asked)
             if more:
                 self._write(campaign, more, entry)
             return findings + more
-        if self._ask is not None:
-            threading.Thread(target=self._judge_and_log, args=(entry, campaign),
+        if asked is not None:
+            threading.Thread(target=self._judge_and_log, args=(entry, campaign, asked),
                              daemon=True).start()
         return findings
 
-    def _judge_and_log(self, entry: dict, campaign: str) -> None:
+    def _judge_and_log(self, entry: dict, campaign: str, asked=None) -> None:
         try:
-            more = self.judgment_findings(entry)
+            more = self.judgment_findings(entry, asked)
             if more:
                 self._write(campaign, more, entry)
         except Exception:

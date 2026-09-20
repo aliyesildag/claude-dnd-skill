@@ -1707,8 +1707,17 @@ def _lint():
             party_names=lambda: {str(p.get("name", "")) for p in _current_stats.get("players", [])
                                  if p.get("name")},
             turn_active=lambda: bool(_active_turn_name()),
+            board_tokens=_board_token_names,
         )
     return _LINT
+
+
+def _board_token_names() -> "list[str]":
+    """Everyone standing on the board, hidden ones included — the DM's line
+    about an ambusher still has to move the ambusher."""
+    with _battle_map_lock:
+        return [str(t.get("name", "")) for t in (_battle_map.get("tokens") or [])
+                if t.get("pos") and t.get("name")]
 
 
 def _lint_observe(entry: dict) -> None:
@@ -1828,6 +1837,10 @@ def battle_map_route():
 
     _persist_battle_map()
     _broadcast_battle_map()
+    linter = _lint()
+    if linter is not None:
+        linter.note_moved(list((data.get("pos") or {}).keys())
+                          + list(data.get("remove") or []))
     return "", 204
 
 

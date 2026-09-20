@@ -42,7 +42,8 @@ class JevStub:
 
     def __init__(self) -> None:
         self.calls: list = []
-        self.answers = {"sonuc_imasi": 0.2, "bilgi_sizintisi": 0.9, "roman_registeri": 0.3}
+        self.answers = {"sonuc_imasi": 0.2, "bilgi_sizintisi": 0.9, "roman_registeri": 0.3,
+                        "tahtada_hareket": 0.8}
 
     def __call__(self, state, questions, timeout=None):
         self.calls.append({"state": state, "questions": dict(questions)})
@@ -76,6 +77,7 @@ class TurnLintLive(unittest.TestCase):
             self.linter._open.clear()
             self.linter._private.clear()
         self.d.post("/stats", {"turn_order": None})
+        self.d.post("/battle-map", {"clear": True})
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -189,6 +191,82 @@ class TurnLintLive(unittest.TestCase):
         self.settle()
         self.assertEqual(self.findings(wait=0.2), [])
 
+    # ── the board and the words about it ──────────────────────────────────
+
+    SPEC = {"handle": "kavran", "cols": 8, "rows": 6,
+            "terrain": [{"tiles": "D3-E3", "kind": "moloz", "difficult": True}]}
+
+    def open_board(self, **extra) -> None:
+        """Open a board and let the opening narration spend the placement.
+
+        Placing everyone at combat start is itself a write, so the scene-setting
+        line that follows it is covered — as it should be. Tests about a *later*
+        turn start after that line, which is where a fight actually is.
+        """
+        self.d.post("/battle-map", {"spec": self.SPEC, "round": 1,
+                                    "pos": {"Dilaver": "B2", "Goblin": "G4"}, **extra})
+        time.sleep(0.2)
+        self.send("Kapı ardına kadar açık, içerisi moloz dolu. Goblin ocağın yanında duruyor.")
+        self.settle()
+        self.log.write_text("", encoding="utf-8")
+        self.jev.calls.clear()
+
+    def asked_move(self):
+        return next((c for c in self.jev.calls if "tahtada_hareket" in c["questions"]), None)
+
+    def test_an_unwritten_token_puts_the_question_to_jev(self):
+        """konumu yazılmayan token soruyu Jev'e taşıyor"""
+        self.open_board()
+        self.send("Öteki goblin bir adım geri atıyor ve ilk kez arkasına bakıyor.")
+        self.settle()
+        call = self.asked_move()
+        self.assertIsNotNone(call, "hareket sorusu sorulmadı")
+        # Not gated on the name: the line says "öteki goblin", the token is "Goblin".
+        self.assertIn("Goblin", call["state"]["tahtada_duranlar"])
+        self.assertTrue(self.findings("tahtada_hareket"), "stub 0.8 dedi, bulgu düşmedi")
+
+    def test_a_token_the_dm_just_moved_is_not_asked_about(self):
+        """DM'in az önce oynattığı token sorulmuyor"""
+        self.open_board()
+        self.d.post("/battle-map", {"pos": {"Goblin": "F4"}})
+        time.sleep(0.2)
+        self.send("Goblin bir adım geri atıyor ve ilk kez arkasına bakıyor.")
+        self.settle()
+        call = self.asked_move()
+        self.assertNotIn("Goblin", (call or {}).get("state", {}).get("tahtada_duranlar", []))
+
+    def test_a_removed_token_counts_as_written(self):
+        """tahtadan kaldırılan token yazılmış sayılıyor"""
+        self.open_board()
+        self.d.post("/battle-map", {"remove": ["Goblin"]})
+        time.sleep(0.2)
+        self.send("Goblin dizlerinin üstüne çöküp yan yatıyor, bıçağı taşlara düşüyor.")
+        self.settle()
+        call = self.asked_move()
+        self.assertNotIn("Goblin", (call or {}).get("state", {}).get("tahtada_duranlar", []))
+
+    def test_nothing_is_asked_when_no_board_is_open(self):
+        """tahta yokken soru sorulmuyor"""
+        self.d.post("/battle-map", {"clear": True})
+        time.sleep(0.2)
+        self.send("Goblin bir adım geri atıyor ve ilk kez arkasına bakıyor.")
+        self.settle()
+        self.assertIsNone(self.asked_move(), "tahta yokken hareket soruldu")
+
+    def test_the_move_credit_is_spent_by_one_narration(self):
+        """hareket kredisi tek anlatımda harcanıyor"""
+        self.open_board()
+        self.d.post("/battle-map", {"pos": {"Goblin": "F4"}})
+        time.sleep(0.2)
+        self.send("Goblin geri çekiliyor.")               # covered by the move
+        self.settle()
+        self.jev.calls.clear()
+        self.send("Goblin bir kez daha geri çekiliyor.")  # nothing written for this one
+        self.settle()
+        call = self.asked_move()
+        self.assertIsNotNone(call, "ikinci anlatım hiç sorulmadı")
+        self.assertIn("Goblin", call["state"]["tahtada_duranlar"])
+
     # ── the judgment tier ─────────────────────────────────────────────────
 
     def test_a_public_line_after_a_whisper_is_checked_against_it(self):
@@ -265,6 +343,13 @@ SECTIONS = [
         "test_a_d20_rolled_for_a_pc_is_logged_under_players_mode",
         "test_tutor_and_player_blocks_are_never_the_dms_fault",
         "test_the_campaign_can_switch_it_off",
+    ]),
+    ("tahta ile sözün uyumu", [
+        "test_an_unwritten_token_puts_the_question_to_jev",
+        "test_a_token_the_dm_just_moved_is_not_asked_about",
+        "test_a_removed_token_counts_as_written",
+        "test_nothing_is_asked_when_no_board_is_open",
+        "test_the_move_credit_is_spent_by_one_narration",
     ]),
     ("yargı — Jev'e ne soruluyor", [
         "test_a_public_line_after_a_whisper_is_checked_against_it",
