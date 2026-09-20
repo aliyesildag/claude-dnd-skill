@@ -10,6 +10,95 @@ Versions before **1.6.0** are reconstructed retroactively from git history; the 
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-09-20 — NPC voices, the response window, a battle board, and a turn linter
+
+The largest release since 2.0. Every NPC can have their own voice. A failed
+roll now waits for the player to answer it before it counts. Combat has a real
+grid instead of adjudication by feel. And what the table was shown is checked
+against the rules this repo already writes down.
+
+Housekeeping: `VERSION` had been left at 2.5.0 while `plugin.json` moved to
+2.6.3, so the two disagreed and `/dm:dnd update --check` read the stale one.
+Both say 2.7.0 now. The 2.6.x releases (character portraits on the party cards,
+a wider party rail, a persisted pinned map) shipped without CHANGELOG entries;
+they are in this install and are not described below — the commit history has
+them.
+
+### Added
+
+- **A voice per NPC, on Gemini TTS.** `ses-haritasi.json` maps a speaker to a
+  voice, and `send.py --npc` reads their line in it. Quoted dialogue inside a
+  narration block switches to the speaker's voice and returns
+  (`--speaker`), the narrator has modes, synthesis is cached on the server
+  keyed by what shapes the audio, and a name that matches nothing is refused
+  before sending rather than falling silently to the narrator.
+- **The response window.** A roll that misses its DC is not resolved yet:
+  Heroic Inspiration rerolls it, Tactical Mind spends Second Wind to add 1d10
+  to a failed ability check. The window offers what the character may legally
+  spend and the player answers before the outcome lands. Whether a feature may
+  be spent is Jev's reading of its text; whether the holder still has the
+  charge, the slot or their wits is a counter the display owns — so a feature
+  is no longer offered after its resource is gone, and concentration is priced
+  rather than hidden. Declare the link with
+  `--stat-uses "Dilaver:Second Wind:2:2:Tactical Mind"`.
+- **A battle board drawn from a spec, not an image.** `grid.py` does the math
+  over `maps/<handle>.grid.json` — Chebyshev distance, cheapest path with
+  difficult terrain doubled, range and sphere/cube/cone/line areas — and
+  `battle_map.py` draws that same spec, so whatever the players see the
+  pathfinder saw first. `send.py --battle-map`, `--map-pos`, `--map-hide`,
+  `--map-reveal`, `--map-remove`, `--map-round`, `--battle-map-clear`. Hidden
+  tokens render only to a viewer bound to no character; a seat never receives
+  their bytes, live or on replay. The board takes the minimap's slot and the
+  active-turn ring follows `push_stats.py --turn-current`.
+- **Private lines.** `send.py --to <character>` shows one player something the
+  others do not see, filtered at the live broadcast, the on-connect replay, the
+  `/tail` poll and the `/snapshot` burst.
+- **A turn linter, log-only.** Every player-facing line already passes through
+  `/chunk`, so the display is where it is checked. Patterns run inline: a DC in
+  narration (Turkish spelling included), a rote closer, narration during an
+  open roll, a d20 rolled for a PC under `roll_mode: players`, an over-long
+  turn mid-fight. Judgments go to Jev on a thread: did this line imply the
+  outcome of a die not yet rolled, does it use something only one character was
+  shown, is this prose spoken or a page, and — with a board open — does it move
+  a token whose position was never written. Findings go to
+  `<campaign>/.lint-log.jsonl` and `GET /lint`. Nothing blocks and nothing
+  narrates; `turn_lint: off` in Session Flags stops the log.
+- **A drift check over the four copies of a vital.** Level, XP, max HP and AC
+  live on the character sheet and are copied into state.md, the display JSON,
+  the runtime stats and the printed sheets. `check_drift.py` reads all four
+  against the sheet, edits nothing, and runs at `/dm:dnd load` and `/dm:dnd
+  save`. A stale *current* HP is not an error; an unreprinted level-up is.
+- **Narration and roll discipline, written down.** The knowledge boundary (a
+  proper noun enters narration only if this PC witnessed it or was told it out
+  loud), stakes before a roll, the DC off the standard ladder silently,
+  advantage settled before the number comes back, and the roll request ending
+  the turn — the attempt may be narrated, the outcome may not. Re-read after a
+  compaction, like campaign facts.
+- **A live display test harness.** `tests/live_display.py` boots the real app
+  on a scratch port and opens one SSE reader per seat, so claims about who
+  received what are checked on the socket rather than on a predicate.
+
+### Fixed
+
+- **Damage and healing rolls skip the prescribed-die guard.** The guard reasons
+  from a label to a die, which works for a d20 but not for `Çelik kılıç —
+  hasar` — that is 1d8 only because the sheet says so, and the guard never sees
+  the sheet. It read the label as an attack and refused the roll, so real
+  damage only went out under `--force-die`. A guard overridden by reflex stops
+  guarding the rolls it was written for.
+- **The battle board's client half.** A `git checkout HEAD --` while splitting
+  shared files reverted `templates/index.html` out of the commit that added the
+  board, so the server broadcast an SVG to a page with no code to draw it. The
+  live tests did not catch it: they assert what the socket carries, which was
+  right the whole time.
+- **The test suite no longer writes over the live campaign.**
+  `test_milestone_counter` imported the app with no runtime override and
+  persisted its fixture over the real stats, replacing the party with "Aldric".
+  It points at a scratch dir, and `LiveDisplay` refuses to start if the app
+  would write outside one.
+- **Narration is spoken only when asked**, and TTS is metered by what Gemini
+  reports rather than by what was requested.
+
 ## [2.5.0] — 2026-09-16 — Creature defenses, narration badges, and an XP ledger
 
 Six fixes in one release, so an existing install updates once and receives all
