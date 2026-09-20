@@ -68,6 +68,8 @@ Full step-by-step procedures for all `/dm:dnd` slash commands. Load this file at
 
 ## `/dm:dnd load <campaign-name>`
 
+**0. Check for drift before anything else.** `python3 ${CLAUDE_SKILL_DIR}/scripts/check_drift.py --campaign <name> --quiet` (with `DND_TABLE_DIR` set for this table). Silence means the copies agree. On `DRIFT`, fix the copies from the sheet *before* pushing stats — otherwise the sidebar spends the session showing a number the sheet disagrees with — and tell the DM in one line what was corrected.
+
 0. **Pick the campaign if none was named.** If `<campaign-name>` was supplied (or the player clearly named one), use it. Otherwise `ls` the campaigns dir (`~/.claude/dnd/campaigns/` or `$DND_CAMPAIGN_ROOT/campaigns/`) and **call `AskUserQuestion`**: *"Which campaign?"* with the existing campaign names as options (most-recently-played first — sort by `state.md` mtime). The player can pick "Other" to type a name. If there are no campaigns, tell them and offer `/dm:dnd new`.
 1. **Session setup — call `AskUserQuestion`** with **two questions** (not typed y/n prompts):
 
@@ -366,6 +368,8 @@ Write session events to session-log.md, update state.md (location, active quests
 - **NPC dispositions:** each NPC with changed or notable standing. Format: `[Name]: [disposition] — [one-line reason]`. Remove NPCs who have returned to baseline.
 
 If nothing changed in a category this session, leave it as-is. If a fact was wrong in the previous save, correct it.
+
+**Check for drift before you finish.** `python3 ${CLAUDE_SKILL_DIR}/scripts/check_drift.py --campaign <name> --quiet`. The save is the moment the sheet and `state.md` are both freshly written, so it is the moment they are most likely to disagree. On `DRIFT`, the sheet wins: correct the copy, then say in one line what was off. A save that leaves drift behind hands the next session a wrong number with nothing flagging it.
 
 **Structured (imported) campaigns — keep the arc window and arc.md in sync.** Advancing the pointer is not optional bookkeeping — it is what keeps the campaign on its own rails, and a pointer that never moves is how an imported module quietly becomes an improvised one. Before you decide "no chapter advanced," check honestly: **if this session cleared the last of the current chapter's `outstanding_beats`, or the party has plainly moved into the next chapter's location or situation, the chapter advanced — treat it as such and move the pointer now.** When a chapter advances: mark the completed chapter `status: complete` in `arc.md`, set the new chapter `status: current`, and update `state.md → ## Campaign Arc` so its `current_chapter`, `current_chapter_detail`, `next_chapter`, and `outstanding_beats` reflect the new window. The full tree stays in `arc.md`; `state.md` carries only the current + next chapter so the load stays light. Only when the party is genuinely still mid-chapter, update `outstanding_beats`/`steering_notes` inline in `state.md` — no need to touch `arc.md`. (Dynamic/sandbox campaigns have no `arc.md`; update the inline arc in `state.md` as before.)
 

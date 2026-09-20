@@ -105,6 +105,32 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/combat.py attack --atk 4 --ac 15 --dmg 2d6+2
 
 ---
 
+## Drift Check — `scripts/check_drift.py`
+
+A mutable vital — Level, XP, max HP, AC — has exactly one home: the character
+sheet, `characters/<name>.md`. Every other place it appears is a copy, and a copy
+is the only thing that can drift. This table keeps four:
+
+| copy | what it is |
+|---|---|
+| `state.md` party line | the at-a-glance line the DM reads |
+| `display-players.json` | what `push_stats.py` loads into the sidebar at session start |
+| `<runtime>/stats.json` | what the sidebar is showing right now |
+| `kagit-verisi/sv2/<name>.json` | what the printed character sheet was generated from |
+
+```bash
+export DND_TABLE_DIR=~/projects/dnd-master/campaign    # where the last two live
+python3 ${CLAUDE_SKILL_DIR}/scripts/check_drift.py --campaign <name>          # full report
+python3 ${CLAUDE_SKILL_DIR}/scripts/check_drift.py --campaign <name> --quiet  # only drift
+```
+
+`DRIFT` (exit 1) means a copy disagrees with the sheet — fix the copy, never the
+sheet. `stale` is not an error: current HP moves mid-fight, and a printed sheet is
+allowed to be behind on XP (but not on level, max HP or AC — an unreprinted
+level-up is real drift). The script never edits anything.
+
+---
+
 ## Grid Script — `scripts/grid.py`
 
 Combat-grid math for mapped tactical scenes. Stateless: the grid spec lives at
