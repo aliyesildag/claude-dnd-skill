@@ -9,8 +9,10 @@ Run from repo root:
 """
 import importlib.util
 import json
+import os
 import pathlib
 import sys
+import tempfile
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -18,12 +20,26 @@ SKILL = REPO / "skills" / "dnd" if (REPO / "skills" / "dnd").is_dir() else REPO
 sys.path.insert(0, str(SKILL / "display"))
 
 
-def _import_app():
+def _import_app(runtime_dir: str):
+    """Import the app with its writable state pointed at a scratch dir.
+
+    These tests POST to /stats, and the handler persists — against the real
+    ~/.claude/dnd until this was added, which meant running the suite wiped
+    the live party out of the sidebar. `runtime_paths` caches the directory in
+    a module global at import, so the cache has to be dropped along with the
+    env var or the next import quietly reuses the real path.
+    """
+    os.environ["DND_RUNTIME_DIR"] = runtime_dir
+    os.environ["DND_CAMPAIGN_ROOT"] = runtime_dir
+    for cached in ("runtime_paths", "paths"):
+        sys.modules.pop(cached, None)
     spec = importlib.util.spec_from_file_location(
         "dnd_display_app", str(SKILL / "display" / "dnd-display-app.py")
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    assert pathlib.Path(runtime_dir).resolve() in pathlib.Path(mod.LOG_FILE).resolve().parents, \
+        f"app would persist to {mod.LOG_FILE}, outside the scratch dir"
     return mod
 
 
@@ -31,9 +47,14 @@ class MilestoneCounterTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.mod = _import_app()
+        cls._tmp = tempfile.TemporaryDirectory(prefix="dnd-milestone-")
+        cls.mod = _import_app(cls._tmp.name)
         cls.mod._token_ok = lambda: True
         cls.client = cls.mod.app.test_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
 
     def setUp(self):
         self.mod._current_stats = {
