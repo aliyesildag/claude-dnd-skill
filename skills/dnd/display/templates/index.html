@@ -339,6 +339,13 @@
   }
   #minimap.visible { display: block; }
   #minimap img { display: block; width: 100%; height: auto; }
+  /* The battle board is inline SVG in the same box; the viewBox is the grid,
+     so width alone sets its height. Hidden while the pinned image is up. */
+  #minimap .mm-board { display: none; }
+  #minimap .mm-board svg { display: block; width: 100%; height: auto; }
+  #minimap.board .mm-board { display: block; }
+  #minimap.board img { display: none; }
+  #minimap.board { cursor: zoom-in; }
   #minimap .mm-label {
     padding: .25em .5em; font-size: calc(10px * var(--ui-scale, 1));
     letter-spacing: .08em; text-transform: uppercase; color: #c9a84c;
@@ -349,6 +356,8 @@
     width: min(94vw, 1500px); cursor: zoom-out; z-index: 9995;
   }
   #minimap.expanded img { max-height: 84vh; width: auto; margin: 0 auto; }
+  #minimap.expanded .mm-board svg { max-height: 84vh; width: auto; max-width: 100%; margin: 0 auto; }
+  #minimap.expanded .mm-label { font-size: calc(13px * var(--ui-scale, 1)); padding: .4em .8em; }
   #minimap-scrim {
     position: fixed; inset: 0; z-index: 9994; background: rgba(0,0,0,0.72);
     display: none;
@@ -6879,12 +6888,46 @@ document.addEventListener('keydown', (e) => {
 let _minimapOn = true;
 try { _minimapOn = localStorage.getItem('dnd-minimap') !== '0'; } catch (_) {}
 let _minimapData = null;
+// The battle board takes the same box while a fight is on. It outranks the
+// pinned image and ignores the per-browser minimap toggle: a player who hid
+// the region map still has to see where the goblins are.
+let _battleMap = null;
+let _battleHandle = null;
 
 function _applyMinimap() {
   const el = document.getElementById('minimap');
   if (!el) return;
   const img = el.querySelector('img');
   const lab = el.querySelector('.mm-label');
+  const board = el.querySelector('.mm-board');
+  if (_battleMap && _battleMap.svg) {
+    board.innerHTML = _battleMap.svg;
+    lab.textContent = _battleMap.label || '';
+    lab.style.display = _battleMap.label ? '' : 'none';
+    el.classList.add('visible', 'board');
+    // A new board opens large — that is the moment the table looks at it.
+    // Later redraws (a move, a turn) respect whatever size the player chose.
+    // The scrim sits at the very end of <body>; the connect burst can land
+    // before the parser gets there, so if it is missing, come back for it.
+    if (_battleMap.handle !== _battleHandle) {
+      const scrim = document.getElementById('minimap-scrim');
+      if (!scrim) { document.addEventListener('DOMContentLoaded', _applyMinimap, { once: true }); return; }
+      _battleHandle = _battleMap.handle;
+      el.classList.add('expanded');
+      scrim.classList.add('visible');
+    }
+    _placeMinimap();
+    return;
+  }
+  el.classList.remove('board');
+  board.innerHTML = '';
+  if (_battleHandle !== null) {
+    // The fight ended: shrink back, and let the region map (if any) return.
+    _battleHandle = null;
+    el.classList.remove('expanded');
+    const scrim = document.getElementById('minimap-scrim');
+    if (scrim) scrim.classList.remove('visible');
+  }
   if (_minimapData && _minimapData.image && _minimapOn) {
     if (img.getAttribute('src') !== _minimapData.image) {
       img.src = _minimapData.image;
@@ -6919,6 +6962,11 @@ window.addEventListener('resize', _placeMinimap);
 
 function setMinimap(data) {
   _minimapData = (data && data.image) ? data : null;
+  _applyMinimap();
+}
+
+function setBattleMap(data) {
+  _battleMap = (data && data.svg) ? data : null;
   _applyMinimap();
 }
 
@@ -8322,6 +8370,9 @@ function connect() {
     if (payload.minimap !== undefined) {
       setMinimap(payload.minimap);
     }
+    if (payload.battle_map !== undefined) {
+      setBattleMap(payload.battle_map);
+    }
     if (payload.vfx) {
       playVfx(payload.vfx);
     }
@@ -9365,7 +9416,7 @@ function _initDicePad() {
 </script>
 <div id="portrait-viewer"><img alt=""></div>
 <div id="minimap-scrim"></div>
-<div id="minimap" title="Haritayı büyüt"><img alt="Harita"><div class="mm-label"></div></div>
+<div id="minimap" title="Haritayı büyüt"><img alt="Harita"><div class="mm-board" role="img" aria-label="Savaş haritası"></div><div class="mm-label"></div></div>
 <div id="vfx-layer" aria-hidden="true"></div>
 </body>
 </html>
