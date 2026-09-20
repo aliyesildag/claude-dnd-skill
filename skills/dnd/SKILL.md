@@ -215,6 +215,7 @@ Once a campaign is loaded, stay in DM mode. Interpret all player messages as in-
   - **If the claim isn't in Live State Flags:** read `state.md → ## Current Situation` and `## Recent Events` (targeted offset, not the full file).
   - **For a specific NPC's attitude or goals:** read only that NPC's entry in `npcs-full.md`, not the whole file.
   - **For a specific past event:** read `state.md → ## Continuity Archive` first; escalate to `session-log.md` only if the archive bullet is insufficient.
+  - **Mid-combat:** re-read `state.md → ## Active Combat` for order/HP/positions/round and run `tracker.py -c <campaign> status` for conditions — never reconstruct a fight from compacted memory. The display's board is a *view* of those positions, not their source.
   - **For PC sheet facts:** read `characters/<PC>.md`.
   - **For predefined-story detail (imported campaigns):** re-read the current chapter's `source/<id>.md`, never a compacted recollection of it — a flattened summary of published boxed text or a stat block is exactly the kind of detail compaction corrupts. For a broader-arc question, read `arc.md`; for a location/quest, `world-nodes.md`.
 
@@ -412,17 +413,34 @@ DNDEND
 
 **Block order:** `--player` → `--dice` → plain narration (with `--stat-*` flags) → `--npc` → `--tutor` (if tutor mode active)
 
+**Mapped combat.** A fight is on the grid when `<campaign>/maps/<handle>.grid.json` exists for the scene's location (or the host names a spec to use). The spec is the map: the display draws it from the spec — walls, water, rubble, pillars — so there is no image to align and nothing to confirm. A fight anywhere else stays theater of the mind: no board, no `pos`, no position math. **Never invent a spec mid-scene**; if the host wants a grid for an unlisted place, author `maps/<handle>.grid.json` together first (dims + terrain, `grid.py validate` as a hard gate), then open it.
+
+Position authority: players **declare intent** in chat or the input panel ("H4'e koşuyorum"); **you are the sole writer of positions**, and every position you write has passed `grid.py move` first. Line-of-sight and cover are yours to adjudicate in prose — `blocks_los` markers in the spec are there for your reasoning, not the script's. An enemy the table has not seen is sent with `--map-hide`; only the DM screen draws it, and its bytes never reach a seat.
+
 **Per-turn combat sequence (follow exactly):**
 ```
 a. send.py --player  ← player action (or describe NPC intent inline)
 b. Roll all dice (combat.py attack / dice.py)
+   Mapped combat only — resolve position math BEFORE the dice, script-first:
+   a declared move is checked with grid.py move (--speed from the mover's sheet;
+   ILLEGAL → narrate the constraint in fiction, offer the furthest-reachable tile
+   from the verdict, let them re-choose — never silently clamp); reach and ranged
+   attacks are checked with grid.py range; AoE tile lists come from grid.py aoe.
+   You move NPCs and validate those moves the same way. Update each mover's
+   "pos" in the STATE_JSON you carry.
 c. send.py --dice    ← ALL roll results with context
 d. tracker.py        ← conditions, concentration, death saves if applicable
    tracker.py effect tick <actor>  ← decrement round effects; prints any expiry warnings
 e. Write full narration for this turn
 f. send.py [--stat-*] ← send complete narration + ALL stat changes — NEVER skip
    Use --effect-start / --effect-end flags when effects begin or end this turn (syncs display)
+   Mapped combat only — put the turn's moves on the board in the same breath:
+   send.py --map-pos "Dilaver:H4" --map-pos "Goblin:J6" [--map-remove <dead>] [--map-reveal <seen>]
+   One flag per mover; a mover who did not move needs nothing. Write the same
+   positions back to state.md → ## Active Combat — the board and the durable copy
+   must never diverge; mid-combat compaction recovers from that block, not from memory.
 g. push_stats.py --turn-current  ← advance turn pointer (still separate — not a narration)
+   The board's active ring follows this automatically; on a new round add --map-round N.
 ```
 Step (f) is the most commonly missed. Every narration block must be sent.
 Step (g) uses `push_stats.py --turn-current` directly because it has no narration to bundle with.

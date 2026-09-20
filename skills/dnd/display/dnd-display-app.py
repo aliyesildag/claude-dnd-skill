@@ -61,6 +61,12 @@ from paths import find_campaign as _find_campaign
 
 import dialogue as _dialogue
 
+# Battle map — the tactical grid drawn from its spec. Optional: without grid.py
+# on the path the display simply has no /battle-map and everything else runs.
+try:
+    import battle_map as _battle_map_mod
+except Exception:
+    _battle_map_mod = None      # type: ignore
 from utf8io import read_text as _read_text
 
 # Response window — what a player may still spend after a roll has landed.
@@ -123,6 +129,7 @@ HELP_LOCK     = rt(".help-lock")
 CAMP_FILE     = rt(".campaign")
 STATS_FILE    = rt("stats.json")
 MINIMAP_FILE  = rt("minimap.json")
+BATTLE_MAP_FILE = rt("battle_map.json")
 TOKEN_FILE    = rt(".token")
 INPUT_FILE    = rt("player_input.json")
 TRIGGER_FILE  = rt(".input_trigger")
@@ -1541,10 +1548,15 @@ def _visible_to(payload: dict, char: str) -> bool:
     line and the whole table, so it fails closed: an unrecognised viewer with a
     bound name that does not match sees nothing.
     """
+    viewer = (char or "").strip().lower()
+    # The other private address: not one character, but the screen that binds
+    # none. A hidden token's bytes must not reach a seat, and "to" cannot say
+    # that — it names a player, and the DM is not one.
+    if payload.get("dm_only"):
+        return not viewer
     target = (payload.get("to") or "").strip().lower()
     if not target:
         return True
-    viewer = (char or "").strip().lower()
     if not viewer:
         return True          # DM screen — binds no character, sees everything
     return viewer == target
@@ -1600,6 +1612,171 @@ def _load_minimap() -> None:
 
 
 _load_minimap()
+
+
+# ─── Battle map ───────────────────────────────────────────────────────────────
+# The tactical grid. Same slot on screen as the minimap, same sticky contract:
+# kept here, persisted, replayed on connect — a fight that loses its board on a
+# refresh is a fight nobody can adjudicate. Positions live in this one dict and
+# nowhere else on the display; grid.py's verdicts are the DM's to act on, and
+# the moves the DM then makes land here through /battle-map.
+
+_battle_map: dict = {}
+_battle_map_lock = threading.Lock()
+
+
+def _persist_battle_map() -> None:
+    try:
+        with _battle_map_lock:
+            data = dict(_battle_map)
+        with open(BATTLE_MAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_battle_map() -> None:
+    global _battle_map
+    try:
+        with open(BATTLE_MAP_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("spec"):
+            _battle_map = data
+    except Exception:
+        pass
+
+
+_load_battle_map()
+
+
+def _active_turn_name() -> str:
+    with _stats_lock:
+        to = _current_stats.get("turn_order")
+    if isinstance(to, dict):
+        return str(to.get("current") or "")
+    return ""
+
+
+def _battle_map_payloads() -> "list[dict]":
+    """The board as the wire carries it: the seats' view, then the DM's.
+
+    Two payloads only when something is hidden. Order matters on the DM screen,
+    which receives both and keeps the last — so the full view goes second.
+    """
+    with _battle_map_lock:
+        state = dict(_battle_map)
+    if not state or _battle_map_mod is None:
+        return [{"battle_map": None}]
+    public, full = _battle_map_mod.views(state, active=_active_turn_name())
+    out = [{"battle_map": public}]
+    if full is not None:
+        out.append({"battle_map": full, "dm_only": True})
+    return out
+
+
+def _broadcast_battle_map() -> None:
+    for payload in _battle_map_payloads():
+        _broadcast(payload)
+
+
+def _party_names() -> "set[str]":
+    with _stats_lock:
+        return {str(p.get("name", "")).strip().lower()
+                for p in _current_stats.get("players", []) if p.get("name")}
+
+
+@app.route("/battle-map", methods=["POST"])
+def battle_map_route():
+    """Set, move, hide, reveal, remove, advance or clear.
+
+    Body, any combination — applied in this order:
+        {"spec": {...grid spec...}, "handle": "kavran", "round": 1}   open a board
+        {"pos": {"Dilaver": "C4", "Goblin": "G7"}}                    place / move
+        {"type": {"Goblin": "npc"}}                                   override kind
+        {"hide": ["Goblin"]}  {"reveal": ["Goblin"]}                  DM-only tokens
+        {"remove": ["Goblin"]}                                        off the board
+        {"round": 3}                                                  new round
+        {"clear": true}                                               back to theatre
+
+    A token's kind defaults from the party list — a name the sidebar knows is a
+    PC, anything else an NPC — so the DM never types "pc". Positions come in as
+    tile labels and are stored as given; grid.py is what judges whether a move
+    was legal, before the DM sends it here.
+    """
+    if not _token_ok():
+        return "Forbidden", 403
+    if _battle_map_mod is None:
+        return jsonify({"error": "battle map module unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+
+    if data.get("clear"):
+        with _battle_map_lock:
+            _battle_map.clear()
+        _persist_battle_map()
+        _broadcast_battle_map()
+        return "", 204
+
+    party = _party_names()
+    with _battle_map_lock:
+        if "spec" in data:
+            spec = data["spec"]
+            errors = _battle_map_mod.check_spec(spec)
+            if errors:
+                return jsonify({"error": "invalid grid spec", "details": errors}), 400
+            _battle_map.clear()
+            _battle_map.update({
+                "spec": spec,
+                "handle": str(data.get("handle") or spec.get("handle") or "")[:60],
+                "round": int(data.get("round") or 1),
+                "tokens": [],
+            })
+        if not _battle_map:
+            return jsonify({"error": "no board open — send a spec first"}), 409
+
+        tokens: list = _battle_map.setdefault("tokens", [])
+
+        def _tok(name: str) -> dict:
+            key = name.strip().lower()
+            for t in tokens:
+                if str(t.get("name", "")).strip().lower() == key:
+                    return t
+            t = {"name": name.strip()[:40], "type": "pc" if key in party else "npc"}
+            tokens.append(t)
+            return t
+
+        cols, rows = int(_battle_map["spec"]["cols"]), int(_battle_map["spec"]["rows"])
+        for name, pos in (data.get("pos") or {}).items():
+            pos = str(pos or "").strip().upper()
+            if pos == "-":
+                pos = ""              # "off the board", the way the DM types it
+            if pos:
+                try:
+                    c, r = _battle_map_mod.parse_tile(pos)
+                except ValueError:
+                    return jsonify({"error": f"bad tile {pos!r} for {name}"}), 400
+                if not (0 <= c < cols and 0 <= r < rows):
+                    return jsonify({"error": f"{pos} is outside the {cols}x{rows} grid"}), 400
+            _tok(name)["pos"] = pos or None
+        for name, kind in (data.get("type") or {}).items():
+            if kind in ("pc", "npc"):
+                _tok(name)["type"] = kind
+        for name in data.get("hide") or []:
+            _tok(name)["hidden"] = True
+        for name in data.get("reveal") or []:
+            _tok(name)["hidden"] = False
+        gone = {str(n).strip().lower() for n in (data.get("remove") or [])}
+        if gone:
+            tokens[:] = [t for t in tokens
+                         if str(t.get("name", "")).strip().lower() not in gone]
+        if "round" in data and "spec" not in data:
+            try:
+                _battle_map["round"] = int(data["round"])
+            except (TypeError, ValueError):
+                pass
+
+    _persist_battle_map()
+    _broadcast_battle_map()
+    return "", 204
 
 
 @app.route("/minimap", methods=["POST"])
@@ -2427,6 +2604,9 @@ def stats():
 
     _persist_stats()
     _broadcast({"stats": current})
+    # Whose turn it is shows on the board as a ring; a turn change redraws it.
+    if "turn_order" in data and _battle_map:
+        _broadcast_battle_map()
     # Broadcast any round-based effect expiries after the stats update
     for evt in _effect_expire_events:
         _broadcast({"effect_expired": evt})
@@ -3675,6 +3855,13 @@ def _initial_payloads(emit, char: str = "") -> None:
     with _minimap_lock:
         if _minimap:
             _emit({"minimap": dict(_minimap)})
+
+    # And the board, if a fight is on. The DM-only view goes only to a viewer
+    # that binds no character — the same rule _visible_to applies live.
+    if _battle_map:
+        for payload in _battle_map_payloads():
+            if _visible_to(payload, char):
+                _emit(payload)
 
     # Send current stats so the sidebar is populated immediately on (re)connect.
     with _stats_lock:

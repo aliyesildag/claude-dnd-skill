@@ -37,6 +37,12 @@ Usage:
     Attempts to shimmy across the rope to the ship under cover of darkness.
     DNDEND
 
+    # Battle map — the tactical grid, drawn from <campaign>/maps/<handle>.grid.json
+    python3 send.py --battle-map kavran --map-pos "Dilaver:B2" --map-pos "Goblin:G7" --map-hide Goblin
+    python3 send.py --map-pos "Dilaver:D4" --map-round 2      # a move, a new round
+    python3 send.py --map-reveal Goblin --map-remove "Goblin 2"
+    python3 send.py --battle-map-clear                          # back to theatre of the mind
+
     # Short inline string
     echo "Short message" | python3 send.py
 
@@ -358,6 +364,81 @@ def _build_image_url(prompt: str, style: str, seed: "int | None") -> str:
     return f"{IMAGE_BASE}{urllib.parse.quote(full, safe='')}?{query}"
 
 
+def _resolve_grid_spec(handle_or_path: str) -> "dict | None":
+    """Load and validate a grid spec, by campaign handle or by path.
+
+    Validation happens here, with grid.py, before anything is sent: an invalid
+    board refused by the server mid-fight is a table staring at a blank corner.
+    """
+    raw = handle_or_path.strip()
+    candidates = []
+    if raw.endswith(".json") or "/" in raw:
+        candidates.append(Path(raw).expanduser())
+    else:
+        campaign = ((_get_json(HEALTH_URL) or {}).get("campaign") or "").strip()
+        if campaign:
+            try:
+                sys.path.insert(0, os.path.join(_DISPLAY_DIR, os.pardir, "scripts"))
+                from paths import find_campaign
+                candidates.append(find_campaign(campaign) / "maps" / f"{raw}.grid.json")
+            except Exception:
+                pass
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
+        looked = ", ".join(str(c) for c in candidates) or raw
+        print(f"send.py: no grid spec for --battle-map {raw!r} (looked at: {looked})",
+              file=sys.stderr)
+        return None
+    try:
+        spec = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"send.py: cannot read grid spec {path}: {exc}", file=sys.stderr)
+        return None
+    try:
+        sys.path.insert(0, os.path.join(_DISPLAY_DIR, os.pardir, "scripts"))
+        import grid
+        errors = grid.validate_spec(spec)
+    except ImportError:
+        errors = []
+    if errors:
+        print("send.py: grid spec is INVALID:", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+        return None
+    if not spec.get("handle"):
+        spec["handle"] = path.stem.replace(".grid", "")
+    return spec
+
+
+def _build_battle_map_payload(args) -> "dict | None":
+    """One /battle-map body from the --battle-map / --map-* flags."""
+    if args.battle_map_clear:
+        return {"clear": True}
+    body: dict = {}
+    if args.battle_map:
+        spec = _resolve_grid_spec(args.battle_map)
+        if spec is None:
+            return None
+        body["spec"] = spec
+        body["handle"] = spec.get("handle", "")
+    pos = {}
+    for item in (args.map_pos or []):
+        name, _, tile = item.rpartition(":")
+        if not name:
+            print(f"send.py: --map-pos wants NAME:TILE, got {item!r}", file=sys.stderr)
+            return None
+        pos[name.strip()] = "" if tile.strip() in ("-", "") else tile.strip().upper()
+    if pos:
+        body["pos"] = pos
+    for key, flag in (("hide", args.map_hide), ("reveal", args.map_reveal),
+                      ("remove", args.map_remove)):
+        if flag:
+            body[key] = [n.strip() for n in flag if n.strip()]
+    if args.map_round is not None:
+        body["round"] = args.map_round
+    return body
+
+
 def _build_stats_payload(args) -> "dict | None":
     """Build a push_stats-compatible payload from --stat-* flags."""
     players: "dict[str, dict]" = {}
@@ -563,6 +644,23 @@ def main() -> None:
         help="Pin a map from the campaign's scenes/ folder to the corner of every "
              "screen (e.g. 49b-bolge-haritasi.jpg). Stays until changed. "
              "Use --label to name it, and --minimap-clear to remove it.")
+    parser.add_argument("--battle-map", metavar="HANDLE|FILE", dest="battle_map",
+        help="Open the tactical grid from <campaign>/maps/<HANDLE>.grid.json (or a "
+             "path to a spec). Validated with grid.py first; the display draws it "
+             "from the spec — there is no image. Use --map-round to start elsewhere than 1.")
+    parser.add_argument("--map-pos", action="append", metavar="NAME:TILE", dest="map_pos",
+        help="Place or move a token, e.g. \"Dilaver:C4\". Repeatable. NAME:- takes it off the board. "
+             "Party names draw as PCs, anything else as an NPC.")
+    parser.add_argument("--map-hide", action="append", metavar="NAME", dest="map_hide",
+        help="A token only the DM screen draws. Repeatable.")
+    parser.add_argument("--map-reveal", action="append", metavar="NAME", dest="map_reveal",
+        help="Show a hidden token to the table. Repeatable.")
+    parser.add_argument("--map-remove", action="append", metavar="NAME", dest="map_remove",
+        help="Take a token off the board for good (dead, fled). Repeatable.")
+    parser.add_argument("--map-round", type=int, metavar="N", dest="map_round",
+        help="Set the round shown under the board.")
+    parser.add_argument("--battle-map-clear", action="store_true", dest="battle_map_clear",
+        help="Close the board — back to theatre of the mind.")
     parser.add_argument("--minimap-clear", action="store_true", dest="minimap_clear",
         help="Remove the pinned corner map.")
     parser.add_argument("--vfx", metavar="NAME",
@@ -812,6 +910,20 @@ def main() -> None:
         _post(f"{BASE_URL}/minimap", json.dumps({
             "image": _img, "label": (args.label or ""),
         }).encode("utf-8"), _read_token())
+        if not (args.player or args.npc or args.dice or args.tutor or args.action
+                or args.vfx or args.image or args.image_file):
+            return
+
+    # ── Battle map ───────────────────────────────────────────────────────────
+    _map_flags = (args.battle_map or args.map_pos or args.map_hide or args.map_reveal
+                  or args.map_remove or args.map_round is not None or args.battle_map_clear)
+    if _map_flags:
+        body = _build_battle_map_payload(args)
+        if body is None:
+            sys.exit(2)
+        if not _post(f"{BASE_URL}/battle-map", json.dumps(body).encode("utf-8"),
+                     _read_token()):
+            sys.exit(3)
         if not (args.player or args.npc or args.dice or args.tutor or args.action
                 or args.vfx or args.image or args.image_file):
             return

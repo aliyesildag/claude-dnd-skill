@@ -67,6 +67,7 @@ Full step-by-step procedures for all `/dm:dnd` slash commands. Load this file at
 ---
 
 ## `/dm:dnd load <campaign-name>`
+
 0. **Pick the campaign if none was named.** If `<campaign-name>` was supplied (or the player clearly named one), use it. Otherwise `ls` the campaigns dir (`~/.claude/dnd/campaigns/` or `$DND_CAMPAIGN_ROOT/campaigns/`) and **call `AskUserQuestion`**: *"Which campaign?"* with the existing campaign names as options (most-recently-played first — sort by `state.md` mtime). The player can pick "Other" to type a name. If there are no campaigns, tell them and offer `/dm:dnd new`.
 1. **Session setup — call `AskUserQuestion`** with **two questions** (not typed y/n prompts):
 
@@ -691,6 +692,21 @@ Run `scripts/dice.py <notation>`. Display output verbatim. Examples: `d20`, `2d6
 
 ## `/dm:dnd combat start`
 1. Identify combatants; collect name, DEX mod, HP, AC, type (pc/npc) for each.
+1.5 **Mapped combat?** If `<campaign>/maps/<handle>.grid.json` exists for the scene's
+   location (or the host names one), this fight is on the grid:
+   - Place everyone: NPCs per the fiction; players state their tiles (default them to a
+     sensible entry edge if they don't care). Add `"pos": "<tile>"` to each combatant's
+     JSON. An enemy the table has not seen yet is placed but hidden.
+   - Open the board with the opening positions in one send — the board on every seat
+     opens large at that moment, so the placement should be complete when it does:
+     ```bash
+     python3 ${CLAUDE_SKILL_DIR}/display/send.py --battle-map <handle> \
+         --map-pos "Dilaver:F2" --map-pos "Hisrayt:E2" --map-pos "Goblin:J7" \
+         --map-pos "Pusucu:B8" --map-hide Pusucu
+     ```
+     `send.py` validates the spec with `grid.py` before sending and refuses an INVALID one.
+     Party names draw as PCs, anything else as an NPC.
+   A fight anywhere else is theater of the mind: no board, no `pos` fields — skip this step.
 2. Run `combat.py init '<JSON>'` — auto-roll initiative for every combatant including PCs. Display tracker and per-combatant roll breakdown.
 3. Send initiative to display:
    ```bash
@@ -706,7 +722,7 @@ Run `scripts/dice.py <notation>`. Display output verbatim. Examples: `d20`, `2d6
    ```
 5. Save STATE_JSON to `state.md` under `## Active Combat`.
 6. Step through turns using the per-turn sequence (in SKILL.md Active DM Mode).
-7. On combat end: update HP in character sheets, clear `## Active Combat`, `push_stats.py --turn-clear`, narrate aftermath, send XP summary, run `tracker.py -c <campaign> clear`.
+7. On combat end: update HP in character sheets, clear `## Active Combat`, `push_stats.py --turn-clear`, narrate aftermath, send XP summary, run `tracker.py -c <campaign> clear`. Mapped combat: close the board — `send.py --battle-map-clear` — the corner map (if one was pinned) comes back on its own.
 
 **XP awards** go in the final display send:
 ```bash
