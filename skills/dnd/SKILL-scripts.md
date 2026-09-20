@@ -588,6 +588,30 @@ Open the browser tab and Chromecast it *before* running `/dm:dnd load` so the br
 
 ---
 
+## Turn Lint — `display/turn_lint.py` (log-only)
+
+The display checks every player-facing line it receives against the narration and
+dice rules in SKILL.md, and appends findings to `<campaign>/.lint-log.jsonl`. It never
+blocks, never narrates, never delays a send: pattern checks run inline (a DC in
+narration, a rote closer, narration during an open roll, a d20 rolled for a PC under
+`roll_mode: players`, an over-long turn mid-fight), judgment checks go to Jev on a
+thread (did the line imply the outcome of an unresolved roll; did a public line use
+something only one character was shown privately; is the prose spoken or page-style).
+
+Read it between scenes or after the session — this is where the DM's own drift shows:
+
+```bash
+curl -s localhost:5001/lint?n=20 | python3 -m json.tool      # last 20 findings
+tail -n 20 <campaign>/.lint-log.jsonl                           # same, from disk
+```
+
+Each line: `rule`, `confidence`, `detail`, `excerpt`, `kind` (narration/npc/dice), `to`.
+Off per campaign with `turn_lint: off` in `state.md → ## Session Flags`. A finding is
+a prompt to re-read the rule, not a verdict — the judgment tier is calibrated on a
+handful of lines and is expected to be reviewed, not obeyed.
+
+---
+
 ## Continuity Autosave — `scripts/autosave_checkpoint.py`, `scripts/install_autosave_hook.py`
 
 Behind-the-scenes continuity checkpoint for long sessions, so a context compaction never loses the player's place. Two layers; see the *Continuity micro-save* rule in SKILL.md and the `/dm:dnd autosave` command.

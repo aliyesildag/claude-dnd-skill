@@ -143,6 +143,7 @@ Three optional settings in `state.md → ## Session Flags` let a table tune the 
 
 - **`difficulty`** — `easy` | `standard` (default) | `hard` | `deadly`. Scales lethality and how hard failure bites: `easy` softens consequences and telegraphs danger early; `deadly` means monsters fight to win, resources matter, and a bad plan can end a character. This tunes *stakes only* — Standard 7 still holds, so you never fudge a roll in either direction.
 - **`spotlight`** — `dm_led` | `balanced` (default) | `player_led`. How much you drive versus follow. `dm_led` keeps the situation moving and offers strong, frequent hooks; `player_led` volunteers less and waits for the player to set direction — at that setting, resist filling the silence, and let them steer.
+- **`turn_lint`** — `on` (default) | `off`. Whether the display keeps a log-only record of narration and dice-rule slips (see SKILL-scripts.md → Turn Lint). It never changes what the table sees; turning it off only stops the log.
 - **`pacing`** — `adventure` | `mixed` (default) | `downtime`. `adventure` keeps pressure on and cuts hard between beats (lean on Standards 6 and 13); `downtime` makes room for roleplay, shopping, and character scenes, and does not force a bang on every transition.
 
 ---

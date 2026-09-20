@@ -61,6 +61,13 @@ from paths import find_campaign as _find_campaign
 
 import dialogue as _dialogue
 
+# Turn lint — log-only checks of what the table was shown, against SKILL.md.
+# Optional like everything else on this side: no module, no lint, no log.
+try:
+    import turn_lint as _turn_lint
+except Exception:
+    _turn_lint = None           # type: ignore
+
 # Battle map — the tactical grid drawn from its spec. Optional: without grid.py
 # on the path the display simply has no /battle-map and everything else runs.
 try:
@@ -1685,6 +1692,51 @@ def _party_names() -> "set[str]":
                 for p in _current_stats.get("players", []) if p.get("name")}
 
 
+# ─── Turn lint ────────────────────────────────────────────────────────────────
+# Built lazily: it reads the party and the turn order through callables, so it
+# is wired here, after both exist, and stays correct as they change.
+
+_LINT = None
+
+
+def _lint():
+    global _LINT
+    if _LINT is None and _turn_lint is not None:
+        _LINT = _turn_lint.Linter(
+            campaign_dir_for=lambda camp: _find_campaign(camp),
+            party_names=lambda: {str(p.get("name", "")) for p in _current_stats.get("players", [])
+                                 if p.get("name")},
+            turn_active=lambda: bool(_active_turn_name()),
+        )
+    return _LINT
+
+
+def _lint_observe(entry: dict) -> None:
+    """Hand a player-facing line to the linter. Never raises, never delays."""
+    linter = _lint()
+    if linter is None:
+        return
+    try:
+        camp = open(CAMP_FILE, encoding="utf-8").read().strip()
+        linter.observe(entry, camp)
+    except Exception:
+        pass
+
+
+@app.route("/lint")
+def lint_tail():
+    """The last N findings, for the DM to read between scenes or sessions."""
+    if not _token_ok():
+        return "Forbidden", 403
+    linter = _lint()
+    try:
+        camp = open(CAMP_FILE, encoding="utf-8").read().strip()
+        n = int(request.args.get("n", "20"))
+    except Exception:
+        camp, n = "", 20
+    return jsonify({"campaign": camp, "findings": linter.tail(camp, n) if linter and camp else []})
+
+
 @app.route("/battle-map", methods=["POST"])
 def battle_map_route():
     """Set, move, hide, reveal, remove, advance or clear.
@@ -2313,6 +2365,7 @@ def chunk():
     _persist_log()
     _persist_tail()
     _broadcast(payload)
+    _lint_observe(log_entry)
     return "", 204
 
 
@@ -3224,6 +3277,8 @@ def player_dice():
                     window_meta = dict(entry["meta"])
                     if not entry["chars"]:
                         _dice_pending.pop(req_id, None)
+                        if _lint() is not None:
+                            _lint().note_resolved(req_id)
     if pending_changed:
         _broadcast({"dice_pending": _dice_pending_snapshot()})
 
@@ -3300,6 +3355,9 @@ def _issue_dice_request(chars: list, spec: str, modifier: int, adv: str, label: 
                 "started_at": _time.time(),
             }
         _broadcast({"dice_pending": _dice_pending_snapshot()})
+        linter = _lint()
+        if linter is not None:
+            linter.note_request(request_id, trackable, dc_val, label)
 
     # Targets with no live phone bound → the main display should roll on-screen.
     onscreen_targets = [c for c in chars if c.lower() != "any" and not _phone_present(c)]
@@ -3397,6 +3455,8 @@ def dice_request_cancel(request_id):
         return "Forbidden", 403
     with _dice_pending_lock:
         _dice_pending.pop(request_id, None)
+    if _lint() is not None:
+        _lint().note_resolved(request_id)
     _broadcast({"dice_pending": _dice_pending_snapshot(), "dice_request_cancelled": request_id})
     return "", 204
 
