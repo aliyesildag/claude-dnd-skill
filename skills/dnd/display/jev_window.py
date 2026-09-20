@@ -50,6 +50,11 @@ import jev_check
 # So this floor sits below the one send.py uses to substitute a name unasked.
 OFFER_MIN = 0.60
 
+# Whether a feature needs concentration runs the other way: a wrong yes puts a
+# warning on a button that did not need one, a wrong no lets a table end up
+# holding two concentrations with nothing to notice it. So: a plain majority.
+CONC_MIN = 0.50
+
 # Per character, and per window. A sheet with more than this has a formatting
 # problem rather than that many spendable features, and the window has to open
 # in the time it takes a die to settle.
@@ -235,7 +240,7 @@ def _digest(text: str) -> str:
 # Bumped whenever a question below is reworded. A cached answer is an answer to
 # the question as it was asked, so an edit has to miss the cache rather than
 # inherit the reading it was written to correct.
-_PROMPT_VERSION = 2
+_PROMPT_VERSION = 3
 
 
 def _legal_key(feature_text: str, kind: str, passed: bool, own: bool) -> str:
@@ -323,6 +328,19 @@ def _questions(pending_legal: "list[tuple[str, dict]]",
             ),
             "criteria": dict(_RESOURCES),
         }
+        q[f"{base}_konsantrasyon"] = {
+            "type": "noul",
+            "instructions": (
+                f"`ozellikler.{f['key']}.metin` özelliğini kullanmak, sürdürmek "
+                "için konsantrasyon gereken bir etki başlatır mı?"
+            ),
+            "criteria": {
+                "true": ("Metin konsantrasyon gerektirdiğini söylüyor, ya da "
+                         "konsantrasyon isteyen bir büyüyü başlatıyor."),
+                "false": ("Anlık bir etki: zar atılır, sayı eklenir ya da atış "
+                          "yenilenir, iş orada biter. Konsantrasyondan söz yok."),
+            },
+        }
     return q
 
 
@@ -375,7 +393,9 @@ def _resolve(features: "list[dict]", kind: str, passed: bool) -> "list[dict]":
         kaynak = ((answers.get(f"{base}_kaynak") or {}).get("choice") or "")
         if not etki:
             continue
-        shape = {"etki": etki, "kaynak": kaynak or "bedava"}
+        conc = (answers.get(f"{base}_konsantrasyon") or {}).get("noul")
+        shape = {"etki": etki, "kaynak": kaynak or "bedava",
+                 "konsantrasyon": conc is not None and float(conc) >= CONC_MIN}
         f.update(shape)
         fresh[f["_sk"]] = shape
 
@@ -430,6 +450,7 @@ def offers(campaign: str, roller: str, present: "list[str]", kind: str, passed: 
                 "detail": "Zarı yeniden at — yeni sonuç geçerli.",
                 "etki": "yeniden_at",
                 "kaynak": "heroic_inspiration",
+                "konsantrasyon": False,
             })
 
     features: "list[dict]" = []
@@ -460,6 +481,8 @@ def offers(campaign: str, roller: str, present: "list[str]", kind: str, passed: 
             "detail": _EFFECTS.get(f.get("etki", ""), ""),
             "etki": f.get("etki", ""),
             "kaynak": f.get("kaynak", "bedava"),
+            # What it costs to hold, as opposed to what it costs to start.
+            "konsantrasyon": bool(f.get("konsantrasyon")),
         })
 
     # One feature can only be offered once, and the hand-written Heroic

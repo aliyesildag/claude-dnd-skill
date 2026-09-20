@@ -60,6 +60,7 @@ except Exception:
 from paths import find_campaign as _find_campaign
 
 import dialogue as _dialogue
+
 from utf8io import read_text as _read_text
 
 # Response window — what a player may still spend after a roll has landed.
@@ -1214,6 +1215,171 @@ def _party_inspiration() -> "tuple[list, dict]":
     return names, held
 
 
+# Conditions that take the holder out of the decision entirely. The window is
+# a choice, and in these states there is nobody left to make one.
+_NO_ACTION_CONDITIONS = ("incapacitated", "unconscious", "paralyzed",
+                         "petrified", "stunned", "dead")
+
+
+def _player_row(name: str) -> dict:
+    """This character's stats as the display currently holds them."""
+    want = _fold_name(name)
+    with _stats_lock:
+        return next((dict(p) for p in _current_stats.get("players", [])
+                     if _fold_name(p.get("name", "")) == want), {})
+
+
+def _find_counter(feature: str, row: dict) -> "dict | None":
+    """The limited-use counter a named feature draws on, if one is declared.
+
+    A feature and the resource it spends are usually not the same word:
+    Tactical Mind spends a use of Second Wind, and Second Wind spends it too.
+    Nothing on the wire says so — the offer carries the feature's name and the
+    model only says *that* a limited use is spent, not which. So the link is
+    declared rather than guessed: a counter may list the features that feed on
+    it, and a feature with no counter of its own is looked up there.
+
+        "uses": {"Second Wind": {"left": 2, "max": 2,
+                                 "feeds": ["Tactical Mind"]}}
+    """
+    want = _fold_name(feature)
+    counters = row.get("uses") or {}
+    for name, counter in counters.items():
+        if _fold_name(name) == want and isinstance(counter, dict):
+            return counter
+    for counter in counters.values():
+        if not isinstance(counter, dict):
+            continue
+        if any(_fold_name(f) == want for f in (counter.get("feeds") or [])):
+            return counter
+    return None
+
+
+def _uses_left(feature: str, row: dict) -> bool:
+    """Has this feature got a charge left, where the display keeps one?"""
+    counter = _find_counter(feature, row)
+    if counter is not None:
+        try:
+            return int(counter.get("left", 0)) > 0
+        except (TypeError, ValueError):
+            return True
+    # Second Wind predates the generic counter and has had its own flag in the
+    # sidebar all along. Read it rather than leave the one charge this table
+    # spends most as the only unchecked resource on the screen.
+    if _fold_name(feature) == _fold_name("Second Wind") \
+            and row.get("second_wind") is not None:
+        return bool(row.get("second_wind"))
+    return True          # untracked — see _can_afford on why that is a yes
+
+
+def _can_afford(offer: dict, row: dict) -> bool:
+    """Does the display's own bookkeeping say this offer is still payable?
+
+    Jev answers whether a feature *may* legally be spent on a roll of this
+    kind. That is a reading of the feature's text, it is the same answer on
+    every failed roll, and it is why the answer can be cached. Whether the
+    holder still has the charge, the slot, or their wits is not a reading of
+    anything — it is a counter, it changes between one roll and the next, and
+    counters are the display's to keep. That split is not new here: Heroic
+    Inspiration was always answered on this side for exactly this reason.
+
+    Untracked resources are a yes. Refusing a legal feature costs the player
+    the feature; offering one they cannot pay costs a glance, with the DM
+    watching the same screen — the same asymmetry OFFER_MIN is set by.
+    """
+    held = {_fold_name(c) for c in (row.get("conditions") or [])}
+    if held & {_fold_name(c) for c in _NO_ACTION_CONDITIONS}:
+        return False
+
+    kaynak = offer.get("kaynak", "")
+    if kaynak == "heroic_inspiration":
+        return bool(row.get("inspiration"))
+    if kaynak == "buyu_slotu":
+        return any(int(slot.get("max", 0)) > int(slot.get("used", 0))
+                   for slot in (row.get("spell_slots") or {}).values()
+                   if isinstance(slot, dict))
+    if kaynak == "sinirli_kullanim":
+        return _uses_left(offer.get("feature", ""), row)
+    return True          # bedava, or a resource nobody named
+
+
+def _note_concentration(offer: dict, row: dict) -> dict:
+    """Price a concentration offer against what the holder is already holding.
+
+    Nobody concentrates on two things, so spending this drops the other one.
+    That is a cost, not an illegality — refusing the offer would take the
+    decision away, which is the one thing the window exists not to do. So the
+    button stays and says what it will cost; `_switch_concentration` is what
+    makes sure only one is ever held.
+
+    The warning rides in `detail`, which the client already prints under the
+    feature's name — a price nobody reads is not a price.
+    """
+    held = str(row.get("concentration") or "").strip()
+    if not offer.get("konsantrasyon") or not held:
+        return offer
+    if _fold_name(held) == _fold_name(offer.get("feature", "")):
+        return offer          # re-upping the same effect costs nothing
+    return {**offer,
+            "detail": f"{offer.get('detail', '')} "
+                      f"{held} üzerindeki konsantrasyonun düşer.".strip(),
+            "drops_concentration": held}
+
+
+def _switch_concentration(name: str, spell: str) -> None:
+    """Move a character's concentration onto `spell`, dropping what it was on.
+
+    Enforced here rather than left to the DM's memory: this is the one moment
+    the display knows a concentration effect just started, and a table that
+    ends up holding two has nothing that would notice.
+    """
+    snapshot, dropped = None, ""
+    with _stats_lock:
+        match = next((p for p in _current_stats.get("players", [])
+                      if _fold_name(p.get("name", "")) == _fold_name(name)), None)
+        if match is not None:
+            held = str(match.get("concentration") or "").strip()
+            if _fold_name(held) != _fold_name(spell):
+                dropped = held
+                if held:
+                    match["effects"] = [
+                        e for e in match.get("effects", [])
+                        if _fold_name(e.get("name", "")) != _fold_name(held)]
+                match["concentration"] = spell
+                snapshot = dict(_current_stats)
+    if snapshot is not None:
+        _persist_stats()
+        _broadcast({"stats": snapshot})
+    if dropped:
+        _feed_line(f"{name} — {spell} için {dropped} üzerindeki "
+                   f"konsantrasyonunu bıraktı.")
+
+
+def _spend_limited_use(feature: str, name: str) -> None:
+    """Drop one charge of a named feature, by the counter that offered it.
+
+    The mirror of _spend_inspiration, and for the same reason: a resource the
+    window spent has to come down where the window read it, or the next failed
+    roll offers a charge that is already gone.
+    """
+    snapshot = None
+    want = _fold_name(feature)
+    with _stats_lock:
+        match = next((p for p in _current_stats.get("players", [])
+                      if _fold_name(p.get("name", "")) == _fold_name(name)), None)
+        if match:
+            counter = _find_counter(feature, match)
+            if counter is not None:
+                counter["left"] = max(0, int(counter.get("left", 0)) - 1)
+                snapshot = dict(_current_stats)
+            elif want == _fold_name("Second Wind") and match.get("second_wind"):
+                match["second_wind"] = False
+                snapshot = dict(_current_stats)
+    if snapshot is not None:
+        _persist_stats()
+        _broadcast({"stats": snapshot})
+
+
 def _open_response_window(roller: str, meta: dict, total: int, request_id: str) -> None:
     """Work out the offers and broadcast the window. Runs off the request thread.
 
@@ -1245,6 +1411,11 @@ def _open_response_window(roller: str, meta: dict, total: int, request_id: str) 
             passed=False, inspiration=held)
     except Exception:
         return
+    # Legal is not the same as payable. Drop what the sheet permits but the
+    # counters no longer cover, before deciding there is a window at all: an
+    # offer nobody can afford is not a window, it is a button that fails.
+    offers = [o for o in offers if _can_afford(o, _player_row(o["character"]))]
+    offers = [_note_concentration(o, _player_row(o["character"])) for o in offers]
     if not offers:
         return
     # Working out the offers took longer than the window would have lasted, so
@@ -2013,6 +2184,7 @@ def stats():
                     "_inventory_add", "_inventory_remove",
                     "_conditions_add", "_conditions_remove",
                     "_slot_use", "_slot_restore",
+                    "_use_spend", "_use_restore",
                     "_hd_use", "_hd_restore",
                     "_effect_start", "_effect_end",
                     "_sheet_spells",
@@ -2051,6 +2223,17 @@ def stats():
                             slot = slots.setdefault(lvl, {"used": 0, "max": 0})
                             _normalize_slot(slot)
                             slot["used"] = max(slot["used"] - 1, 0)
+                        elif key in ("_use_spend", "_use_restore"):
+                            # Only moves a counter the character already has.
+                            # Declaring one is a plain `uses` field — spending
+                            # a feature nobody declared would invent a counter
+                            # at zero and then refuse the feature forever.
+                            counter = (match.get("uses") or {}).get(str(val))
+                            if isinstance(counter, dict):
+                                left = int(counter.get("left", 0))
+                                counter["left"] = (
+                                    max(0, left - 1) if key == "_use_spend"
+                                    else min(left + 1, int(counter.get("max", 99))))
                         elif key == "_hd_use":
                             hd = match.setdefault("hit_dice", {"remaining": 0, "max": 0})
                             hd["remaining"] = max(hd.get("remaining", 0) - 1, 0)
@@ -3094,6 +3277,10 @@ def response_window_spend(window_id):
                f"({window['roller']}, {window['total']} vs DC {window['dc']}).")
     if offer.get("kaynak") == "heroic_inspiration":
         _spend_inspiration(offer["character"])
+    elif offer.get("kaynak") == "sinirli_kullanim":
+        _spend_limited_use(offer["feature"], offer["character"])
+    if offer.get("konsantrasyon"):
+        _switch_concentration(offer["character"], offer["feature"])
 
     follow = _jev_window.follow_up(offer.get("etki", ""), window["spec"],
                                    window["modifier"], window["advantage"]) if _jev_window else None

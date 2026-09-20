@@ -49,6 +49,9 @@ Usage:
     #   --stat-hp         "NAME:CURRENT:MAX"
     #   --stat-temp-hp    "NAME:N"
     #   --stat-slot-use   "NAME:LEVEL"       (expend one slot)
+    #   --stat-uses       "NAME:FEATURE:LEFT:MAX[:FEEDS]"  (declare a limited-use counter)
+    #   --stat-use-spend  "NAME:FEATURE"     (spend one charge)
+    #   --stat-use-restore "NAME:FEATURE"    (give one back)
     #   --stat-slot-restore "NAME:LEVEL"     (restore one slot)
     #   --stat-condition-add    "NAME:CONDITION"
     #   --stat-condition-remove "NAME:CONDITION"
@@ -380,6 +383,29 @@ def _build_stats_payload(args) -> "dict | None":
             except ValueError:
                 pass
 
+    # Limited uses, by the feature's own name — the handle the response window
+    # looks a charge up by when it decides whether to offer the feature at all.
+    for spec in (args.stat_uses or []):
+        parts = spec.split(":")
+        if len(parts) >= 4:
+            name, feature, left, mx = parts[0], parts[1], parts[2], parts[3]
+            # Optional 5th field: the features that draw on this counter, so
+            # the window knows Tactical Mind spends a Second Wind use.
+            feeds = [f.strip() for f in parts[4].split(",")] if len(parts) > 4 else []
+            try:
+                _p(name).setdefault("uses", {})[feature] = {
+                    "left": int(left), "max": int(mx),
+                    **({"feeds": [f for f in feeds if f]} if feeds else {})}
+            except ValueError:
+                pass
+
+    for flag, key in ((args.stat_use_spend, "_use_spend"),
+                      (args.stat_use_restore, "_use_restore")):
+        for spec in (flag or []):
+            name, _, feature = spec.partition(":")
+            if name and feature:
+                _p(name)[key] = feature
+
     for spec in (args.stat_slot_use or []):
         idx = spec.rfind(":")
         if idx > 0:
@@ -604,6 +630,14 @@ def main() -> None:
         help="Set HP: NAME:CURRENT:MAX (can repeat for multiple players)")
     parser.add_argument("--stat-temp-hp", action="append", metavar="NAME:N",
         help="Set temp HP: NAME:N")
+    parser.add_argument("--stat-uses", action="append", metavar="NAME:FEATURE:LEFT:MAX[:FEEDS]",
+                        help="Declare a limited-use counter (e.g. \"Dilaver:Second Wind:2:2:Tactical Mind\"). "
+                             "FEEDS is a comma-separated list of features that spend this "
+                             "counter. The response window reads it before offering them.")
+    parser.add_argument("--stat-use-spend", action="append", metavar="NAME:FEATURE",
+                        help="Spend one charge of a declared limited-use feature.")
+    parser.add_argument("--stat-use-restore", action="append", metavar="NAME:FEATURE",
+                        help="Give a charge back (a short rest, usually).")
     parser.add_argument("--stat-slot-use", action="append", metavar="NAME:LEVEL",
         help="Expend one spell slot: NAME:LEVEL")
     parser.add_argument("--stat-slot-restore", action="append", metavar="NAME:LEVEL",
