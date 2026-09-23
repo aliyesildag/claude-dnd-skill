@@ -43,11 +43,16 @@ class JevStub:
     def __init__(self) -> None:
         self.calls: list = []
         self.answers = {"sonuc_imasi": 0.2, "bilgi_sizintisi": 0.9, "roman_registeri": 0.3,
-                        "tahtada_hareket": 0.8}
+                        "tahtada_hareket": 0.8, "npc_hukmu": 0.1, "dusman_can": 0.1,
+                        "zar_oynandi": 0.9}
 
     def __call__(self, state, questions, timeout=None):
         self.calls.append({"state": state, "questions": dict(questions)})
-        return {qid: {"noul": self.answers.get(qid, 0.0)} for qid in questions}
+        # zar_oynandi_0, _1, … share one answer: the tests are about which
+        # rolls get asked, not about telling them apart.
+        return {qid: {"noul": self.answers.get(
+                    "zar_oynandi" if qid.startswith("zar_oynandi_") else qid, 0.0)}
+                for qid in questions}
 
 
 class TurnLintLive(unittest.TestCase):
@@ -76,6 +81,9 @@ class TurnLintLive(unittest.TestCase):
         with self.linter._lock:
             self.linter._open.clear()
             self.linter._private.clear()
+            self.linter._rolls.clear()
+            self.linter._played.clear()
+        self.jev.answers["zar_oynandi"] = 0.9
         self.d.post("/stats", {"turn_order": None})
         self.d.post("/battle-map", {"clear": True})
 
@@ -134,6 +142,32 @@ class TurnLintLive(unittest.TestCase):
         self.log.write_text("", encoding="utf-8")
         self.send("Kapı gıcırdayarak açılıyor. İçerisi karanlık.")
         self.assertFalse(self.findings("rote_closer", wait=0.3))
+
+    def test_a_closing_menu_is_logged(self):
+        """seçenek listesiyle kapanan tur log'a düşüyor"""
+        self.send("Kapı aralık, içeriden bir mum ışığı sızıyor.\n\n"
+                  "1. İçeri gir\n2. Kapıyı dinle\n3. Geri dön")
+        f = self.findings("options_menu")
+        self.assertTrue(f)
+        self.assertIn("3", f[0]["detail"])
+
+    def test_a_list_in_the_middle_is_not_a_menu(self):
+        """ortadaki liste menü değil"""
+        self.send("Sandıkta şunlar var:\n- bir ip\n- iki mum\n"
+                  "Sandığın dibinde ise bir şey kıpırdıyor.")
+        self.assertFalse(self.findings("options_menu", wait=0.3))
+
+    def test_an_enemy_hp_number_is_logged(self):
+        """düşman canı sayıyla verilince log'a düşüyor"""
+        self.send("Goblin sendeliyor. Sadece 3 HP'si kaldı.")
+        f = self.findings("enemy_hp")
+        self.assertTrue(f)
+        self.assertIn("3 HP", f[0]["detail"])
+
+    def test_a_pcs_own_hp_is_not_an_enemy_leak(self):
+        """PC'nin kendi canı düşman sızıntısı değil"""
+        self.send("Dilaver 12 HP'ye düşüyor, nefesi kesiliyor.")
+        self.assertFalse(self.findings("enemy_hp", wait=0.3))
 
     def test_narration_during_an_open_roll_is_logged(self):
         """açık zar isteği sırasında anlatım log'a düşüyor"""
@@ -322,6 +356,89 @@ class TurnLintLive(unittest.TestCase):
         self.settle()
         self.assertTrue(any("roman_registeri" in c["questions"] for c in self.jev.calls))
 
+    def test_narration_is_asked_for_an_npc_verdict_and_npc_lines_are_not(self):
+        """anlatım NPC hükmü için sınanıyor, NPC repliği sınanmıyor"""
+        self.send("Muhtar gözlerini kaçırıyor ve defteri usulca kapatıyor.")
+        self.settle()
+        self.assertTrue(any("npc_hukmu" in c["questions"] for c in self.jev.calls))
+        self.jev.calls.clear()
+        self.send("O adam yalancının teki, ona sakın güvenme!", npc="Muhtar")
+        self.settle()
+        self.assertFalse(any("npc_hukmu" in c["questions"] for c in self.jev.calls),
+                         "NPC'nin kendi suçlaması anlatıcı hükmü diye soruldu")
+
+    def test_the_enemy_hp_question_waits_for_a_fight(self):
+        """düşman canı sorusu savaşı bekliyor"""
+        self.send("Goblin sendeliyor, kolundan kan akıyor, zor ayakta duruyor.")
+        self.settle()
+        self.assertFalse(any("dusman_can" in c["questions"] for c in self.jev.calls),
+                         "savaş yokken düşman canı soruldu")
+        self.d.post("/stats", {"turn_order": {"current": "Dilaver", "order": PARTY + ["Goblin"]}})
+        self.send("Goblin sendeliyor, kolundan kan akıyor, zor ayakta duruyor.")
+        self.settle()
+        self.assertTrue(any("dusman_can" in c["questions"] for c in self.jev.calls))
+
+    # ── dice the prose has to play ────────────────────────────────────────
+
+    HIT = "Goblin attacks: d20+4 = 19 vs AC 15 — hit! 1d6+2 = 6 piercing"
+
+    def asked_rolls(self):
+        return next((c for c in self.jev.calls
+                     if any(q.startswith("zar_oynandi_") for q in c["questions"])), None)
+
+    def test_a_roll_is_asked_about_once_its_turn_is_over(self):
+        """zar, turu bitince soruluyor"""
+        self.send(self.HIT, dice=True)
+        self.send("Goblin hançerini savuruyor; Dilaver son anda geri çekiliyor.")
+        self.settle()
+        self.assertIsNone(self.asked_rolls(), "tur bitmeden zar soruldu")
+        self.send("Dilaver karşılık veriyor.", player="Dilaver")
+        self.settle()
+        call = self.asked_rolls()
+        self.assertIsNotNone(call, "tur bitince zar sorulmadı")
+        self.assertIn("d20+4 = 19", call["state"]["zarlar"][0])
+        self.assertIn("geri çekiliyor", call["state"]["anlatim"])
+
+    def test_a_dropped_roll_is_logged(self):
+        """oynanmayan zar log'a düşüyor"""
+        self.jev.answers["zar_oynandi"] = 0.1
+        self.send(self.HIT, dice=True)
+        self.send("Goblin hançerini savuruyor; Dilaver son anda geri çekiliyor.")
+        self.send("Orc attacks: d20+5 = 8 vs AC 15 — miss", dice=True)
+        f = self.findings("zar_dusuruldu")
+        self.assertTrue(f, "stub 0.1 dedi, bulgu düşmedi")
+        self.assertIn("d20+4", f[0]["detail"])
+        self.assertEqual(f[0]["kind"], "narration")
+
+    def test_a_played_roll_is_not_a_finding(self):
+        """oynanan zar bulgu değil"""
+        self.send(self.HIT, dice=True)
+        self.send("Hançer Dilaver'in omzuna saplanıyor, zırhın altından kan sızıyor.")
+        self.send("Dilaver dişlerini sıkıyor.", player="Dilaver")
+        self.settle()
+        self.assertIsNotNone(self.asked_rolls())
+        self.assertEqual(self.findings("zar_dusuruldu", wait=0.3), [])
+
+    def test_every_line_of_the_turn_can_play_the_roll(self):
+        """turdaki her satır zarı oynayabilir"""
+        self.send(self.HIT, dice=True)
+        self.send("Goblin öne atılıyor, hançeri parlıyor.")
+        self.send("Al bakalım, kahraman!", npc="Goblin")
+        self.send("Hisrayt yaklaşıyor.", player="Hisrayt")
+        self.settle()
+        prose = self.asked_rolls()["state"]["anlatim"]
+        self.assertIn("öne atılıyor", prose)
+        self.assertIn("kahraman", prose)
+
+    def test_dice_with_no_prose_after_them_wait(self):
+        """ardından anlatım gelmeyen zar bekliyor"""
+        self.send(self.HIT, dice=True)
+        self.send("Orc attacks: d20+5 = 8 vs AC 15 — miss", dice=True)
+        self.settle()
+        self.assertIsNone(self.asked_rolls(), "anlatım yokken zar soruldu")
+        with self.linter._lock:
+            self.assertEqual(len(self.linter._rolls), 2)
+
     def test_the_log_is_readable_from_the_display(self):
         """log display'den okunabiliyor"""
         self.send("DC 15.")
@@ -336,6 +453,10 @@ SECTIONS = [
         "test_the_turkish_spelling_counts_too",
         "test_a_leaked_dc_is_matched_to_the_open_request",
         "test_a_rote_closer_is_logged",
+        "test_a_closing_menu_is_logged",
+        "test_a_list_in_the_middle_is_not_a_menu",
+        "test_an_enemy_hp_number_is_logged",
+        "test_a_pcs_own_hp_is_not_an_enemy_leak",
         "test_narration_during_an_open_roll_is_logged",
         "test_a_short_tail_after_a_request_is_allowed",
         "test_a_resolved_request_no_longer_binds",
@@ -357,7 +478,16 @@ SECTIONS = [
         "test_narration_during_an_open_roll_is_checked_for_its_outcome",
         "test_a_confident_no_is_not_a_finding",
         "test_long_narration_is_checked_for_register",
+        "test_narration_is_asked_for_an_npc_verdict_and_npc_lines_are_not",
+        "test_the_enemy_hp_question_waits_for_a_fight",
         "test_the_log_is_readable_from_the_display",
+    ]),
+    ("zar ile sözün uyumu", [
+        "test_a_roll_is_asked_about_once_its_turn_is_over",
+        "test_a_dropped_roll_is_logged",
+        "test_a_played_roll_is_not_a_finding",
+        "test_every_line_of_the_turn_can_play_the_roll",
+        "test_dice_with_no_prose_after_them_wait",
     ]),
 ]
 

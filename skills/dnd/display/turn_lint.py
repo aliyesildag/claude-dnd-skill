@@ -64,7 +64,15 @@ PRIVATE_WINDOW = 12
 # question separates cleanly (0.07 clean vs 0.48–0.63 leaking) but sits lower
 # than the others; log-only means a lower bar costs a log line, not a turn.
 JEV_MIN = {"sonuc_imasi": 0.60, "bilgi_sizintisi": 0.45, "roman_registeri": 0.55,
-           "tahtada_hareket": 0.55}
+           "tahtada_hareket": 0.55,
+           # Not calibrated yet — set at the default until a session's log says otherwise.
+           "npc_hukmu": 0.60, "dusman_can": 0.60}
+# The roll question asks whether a roll WAS played, so the finding is a low
+# answer: below this, the roll is logged as dropped.
+ROLL_PLAYED_MAX = 0.35
+# Dice blocks held for the prose that should play them, and for how long.
+ROLL_WINDOW = 6
+ROLL_TTL = 300.0
 # Turkish is compact; the register of a line shows well before 25 words.
 REGISTER_MIN_WORDS = 12
 
@@ -75,6 +83,13 @@ _ROTE = re.compile(
     r"(?:ne\s+yap(?:ıyor|acak)s[ıu]n(?:uz|ız)?|what\s+(?:do|will)\s+you\s+do)\s*\??\s*$", re.I)
 # "1d20", "d20", "2d20" — a digit before the d is not a word boundary.
 _D20_LINE = re.compile(r"(?<![A-Za-z])\d*d20\b", re.I)
+# "4 HP", "3/20 HP", "12 can puanı", "HP'si 3", "hit points: 7" — a number
+# beside a hit-point word. Whose HP it is gets decided per sentence.
+_HP_WORD = r"(?:HP|can\s+puan\w*|hit\s+points?)"
+_HP_NUM = re.compile(rf"\b\d{{1,3}}\s*{_HP_WORD}\b|\b{_HP_WORD}(?:'?s[ıi])?\s*:?\s*\d{{1,3}}\b", re.I)
+_SENTENCE = re.compile(r"[^.!?\n]+")
+# A line that starts like a list item: "1.", "2)", "a)", "-", "•".
+_MENU_ITEM = re.compile(r"^\s*(?:\d{1,2}[.)]|[a-eA-E][.)]|[-•*–])\s+\S")
 
 
 def _now() -> float:
@@ -115,6 +130,8 @@ class Linter:
         self._open: dict = {}                       # request_id → {ts, character, dc, label}
         self._private: list = []                    # recent (ts, to, text)
         self._moved: set = set()                    # tokens written since the last narration
+        self._rolls: list = []                      # (ts, text) dice shown, not yet answered for
+        self._played: list = []                     # prose shown since those dice
         self._flags_cache: dict = {}                # campaign → (mtime, flags)
 
     # ── what the server tells us ──────────────────────────────────────────
@@ -210,10 +227,25 @@ class Linter:
                 out.append({"rule": "roll_not_final", "confidence": 0.8,
                             "detail": f"{_words(text)} kelime anlatım, açık zar isteği: {who}",
                             "excerpt": _excerpt(text)})
+            if _trailing_menu(text) >= 2:
+                out.append({"rule": "options_menu", "confidence": 1.0,
+                            "detail": f"tur {_trailing_menu(text)} maddelik bir seçenek listesiyle kapanıyor",
+                            "excerpt": _excerpt(text[-EXCERPT:])})
             if self._turn_active() and _words(text) > HOT_WORD_CAP:
                 out.append({"rule": "length_heat", "confidence": 0.9,
                             "detail": f"savaşta {_words(text)} kelime (> {HOT_WORD_CAP})",
                             "excerpt": _excerpt(text)})
+
+        if kind in ("narration", "dice"):
+            # A PC's own HP is theirs to know; a number beside an enemy is not.
+            party = self._party_names()
+            for sent in _SENTENCE.findall(text):
+                m = _HP_NUM.search(sent)
+                if m and not any(p and p in _fold(sent) for p in party):
+                    out.append({"rule": "enemy_hp", "confidence": 0.8,
+                                "detail": f"düşman canı sayıyla: {m.group(0)}",
+                                "excerpt": _excerpt(sent)})
+                    break
 
         if kind == "dice" and self.flags(campaign).get("roll_mode", "players") == "players":
             party = self._party_names()
@@ -335,6 +367,40 @@ class Linter:
                 },
             }
 
+        if kind == "narration":
+            q["npc_hukmu"] = {
+                "type": "noul",
+                "instructions": (
+                    "`anlatim` içinde ANLATICI sesi, bir NPC'nin dürüst olup olmadığına, "
+                    "yalan söyleyip söylemediğine, güvenilir ya da sadık olup olmadığına ya da "
+                    "gizli niyetine dair kesin bir HÜKÜM veriyor mu?"),
+                "criteria": {
+                    "true": ("Hükmü anlatıcı kendisi veriyor: 'yalan söylüyor', 'dürüst biri, ona "
+                             "güvenebilirsin', 'aslında Vigil için çalışıyor', 'niyeti temiz'. "
+                             "Oyuncuya yorumlayacak bir şey bırakmıyor."),
+                    "false": ("Anlatıcı yalnızca görüleni anlatıyor ve yorumu oyuncuya bırakıyor: "
+                              "duraksama, kapıya kayan bakış, defterle uyuşmayan hikâye; ya da "
+                              "başarılı bir Sezgi (Insight) zarının sonucu olarak bir izlenim "
+                              "veriyor ('atlı hakkında bir şey saklıyor gibi'). Bir NPC'nin başka "
+                              "biri hakkında tırnak içinde söylediği suçlama da hüküm sayılmaz."),
+                },
+            }
+            if self._turn_active() or self._board_tokens():
+                q["dusman_can"] = {
+                    "type": "noul",
+                    "instructions": (
+                        "Savaş sürüyor. `anlatim` bir düşmanın ya da canavarın KALAN CANINI "
+                        "sayıyla ya da sayı kadar kesin biçimde veriyor mu?"),
+                    "criteria": {
+                        "true": ("Oyuncu kalan canı hesaplayabiliyor: '3 HP'si kaldı', 'bir vuruş "
+                                 "daha onu kesin düşürür', 'yirmi can puanından ancak beşi kaldı', "
+                                 "'tam 12 hasar daha kaldırır'."),
+                        "false": ("Yalnızca durumu betimliyor: yaralı, kan kaybediyor, zor ayakta "
+                                  "duruyor, sarsılmış — ya da düşman canından hiç söz etmiyor. "
+                                  "Oyuncu karakterlerinin kendi canı bu soruya girmez."),
+                    },
+                }
+
         if kind == "narration" and _words(text) >= REGISTER_MIN_WORDS:
             q["roman_registeri"] = {
                 "type": "noul",
@@ -372,6 +438,8 @@ class Linter:
             "sonuc_imasi": "zar düşmeden sonuç ima edildi",
             "bilgi_sizintisi": "özel satırdaki bilgi herkese açık kullanıldı",
             "roman_registeri": "anlatım konuşma değil sayfa gibi",
+            "npc_hukmu": "anlatıcı bir NPC'nin dürüstlüğüne hüküm verdi",
+            "dusman_can": "düşmanın kalan canı hesaplanabilir biçimde verildi",
         }
         out = []
         for qid, a in answers.items():
@@ -388,6 +456,77 @@ class Linter:
                     detail += f" ({source})"
                 out.append({"rule": qid, "confidence": round(conf, 2), "detail": detail,
                             "excerpt": _excerpt(str(entry.get("text") or ""))})
+        return out
+
+    # ── dice the prose has to answer for ──────────────────────────────────
+
+    def _turn_rolls(self, entry: dict) -> "tuple[dict, dict] | None":
+        """Dice and the prose that followed them, once their turn is over.
+
+        A turn is over when the next dice block or player line arrives after
+        some prose did. Asking at the first narration instead would miss a
+        result the DM plays in its second paragraph or in an NPC's line.
+        Only dice sent through /chunk get here — the DM's own rolls. A phone
+        roll never does, which matters: a failed one is narrated as an attempt
+        with the outcome held for the next turn, and that is not a drop.
+        """
+        kind = _kind(entry)
+        text = str(entry.get("text") or "")
+        if entry.get("to") or kind in ("tutor", "action"):
+            return None
+        cutoff = _now() - ROLL_TTL
+        closed = None
+        with self._lock:
+            if kind in ("dice", "player") and self._rolls and self._played:
+                closed = ([t for ts, t in self._rolls if ts >= cutoff], "\n".join(self._played))
+                self._rolls.clear()
+                self._played.clear()
+            if kind == "dice":
+                self._rolls.append((_now(), text))
+                del self._rolls[:-ROLL_WINDOW]
+            elif kind in ("narration", "npc") and self._rolls:
+                self._played.append(text)
+        if not closed or not closed[0]:
+            return None
+        rolls, prose = closed
+        state = {"zarlar": rolls, "anlatim": prose}
+        q = {}
+        for i in range(len(rolls)):
+            q[f"zar_oynandi_{i}"] = {
+                "type": "noul",
+                "instructions": (
+                    f"`zarlar[{i}]` masaya gösterilen bir zar satırı (saldırı, hasar, kurtarma, "
+                    "yetenek zarı). `anlatim` bu zardan sonra masaya söylenenler. Anlatım bu "
+                    "zarın SONUCUNU oynuyor mu — isabet ya da ıska, hasar, başarı ya da "
+                    "başarısızlık anlatımda karşılığını buluyor mu?"),
+                "criteria": {
+                    "true": ("Zarın sonucu anlatımda var ve zarla uyumlu: isabet eden saldırı yara "
+                             "açıyor, ıskalayan ıskalıyor, geçilen kurtarma zararı azaltıyor. Sayıyı "
+                             "söylemesi gerekmez; kurgu içinde karşılığı olması yeter."),
+                    "false": ("Zar anlatımda hiç karşılık bulmuyor, sanki atılmamış; ya da anlatım "
+                              "zarın tersini anlatıyor: isabet eden saldırı ıskalamış, başarısız "
+                              "kurtarma başarılı gibi."),
+                },
+            }
+        return state, q
+
+    def roll_findings(self, asked) -> list:
+        """A roll the prose never played, or played against its own number."""
+        state, questions = asked
+        if not questions or self._ask is None:
+            return []
+        answers = self._ask(state, questions, timeout=8) or {}
+        out = []
+        for i, roll in enumerate(state["zarlar"]):
+            val = (answers.get(f"zar_oynandi_{i}") or {}).get("noul")
+            try:
+                played = float(val)
+            except (TypeError, ValueError):
+                continue
+            if played < ROLL_PLAYED_MAX:
+                out.append({"rule": "zar_dusuruldu", "confidence": round(1 - played, 2),
+                            "detail": f"zar anlatımda oynanmadı: {_excerpt(roll)}",
+                            "excerpt": _excerpt(state["anlatim"])})
         return out
 
     # ── entry point from /chunk ───────────────────────────────────────────
@@ -410,6 +549,9 @@ class Linter:
         # the reset below is what makes the next narration answer for itself,
         # and a thread that asked afterwards would always see an empty board.
         asked = self.judgment_questions(entry) if self._ask is not None else None
+        rolls = self._turn_rolls(entry)
+        if self._ask is None:
+            rolls = None
         if _kind(entry) == "narration" and not to:
             with self._lock:
                 self._moved.clear()
@@ -419,17 +561,24 @@ class Linter:
             more = self.judgment_findings(entry, asked)
             if more:
                 self._write(campaign, more, entry)
-            return findings + more
-        if asked is not None:
-            threading.Thread(target=self._judge_and_log, args=(entry, campaign, asked),
+            dropped = self.roll_findings(rolls) if rolls else []
+            if dropped:
+                self._write(campaign, dropped, {"text": rolls[0]["anlatim"]})
+            return findings + more + dropped
+        if asked is not None or rolls:
+            threading.Thread(target=self._judge_and_log, args=(entry, campaign, asked, rolls),
                              daemon=True).start()
         return findings
 
-    def _judge_and_log(self, entry: dict, campaign: str, asked=None) -> None:
+    def _judge_and_log(self, entry: dict, campaign: str, asked=None, rolls=None) -> None:
         try:
-            more = self.judgment_findings(entry, asked)
+            more = self.judgment_findings(entry, asked) if asked is not None else []
             if more:
                 self._write(campaign, more, entry)
+            dropped = self.roll_findings(rolls) if rolls else []
+            if dropped:
+                # Logged against the prose that should have played the roll.
+                self._write(campaign, dropped, {"text": rolls[0]["anlatim"]})
         except Exception:
             pass                        # a lint failure must never surface at the table
 
@@ -459,6 +608,16 @@ class Linter:
             except ValueError:
                 continue
         return out
+
+
+def _trailing_menu(text: str) -> int:
+    """How many list-item lines the text ends on, blank lines aside."""
+    n = 0
+    for line in reversed([l for l in text.splitlines() if l.strip()]):
+        if not _MENU_ITEM.match(line):
+            break
+        n += 1
+    return n
 
 
 def _fold(s: str) -> str:
