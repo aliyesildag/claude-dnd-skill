@@ -10,6 +10,39 @@ Versions before **1.6.0** are reconstructed retroactively from git history; the 
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-09-23 — Combat rulings, and a linter that checks them
+
+Three things carried over from reading sofrony82's fork of the upstream skill,
+which runs the DM through a Telegram bot and wrote down what went wrong in its
+live sessions.
+
+### Added
+
+- **Combat rulings checklist in `SKILL.md`**, after the per-turn sequence:
+  initiative order is binding, one action per turn and statblocks as written,
+  Undead Fortitude only on its trigger, immunity after a successful save is
+  tracked, no reaction or spell the sheet cannot pay for, a warning and
+  Disengage before an opportunity attack, disadvantage for ranged attacks in
+  melee, death saves at 0 HP, and no enemy HP numbers.
+- **Two narration rules:** no numbered menu closing a reply, and no verdict on
+  whether an NPC is honest — describe the tells and let the player read them.
+- **Four turn-linter checks**, log-only like the rest: `zar_dusuruldu` (a roll
+  shown but never played, or played against its number — asked of Jev once the
+  turn is over), `npc_hukmu` (the narrator rules on an NPC's honesty),
+  `dusman_can` (an enemy's remaining HP can be worked out from the prose, asked
+  only in a fight), plus regex checks `enemy_hp` and `options_menu`.
+
+### Changed
+
+- **`dice.py` prints the modifier before the total** on advantage and
+  disadvantage rolls: `[14] + 3 = 17`, not `[14] = 17 + 3`.
+
+### Fixed
+
+- **`xp.py` refuses a character name that is a path.** `--characters
+  ../../other/characters/bob` walked out of the campaign and awarded XP on
+  another sheet.
+
 ## [2.7.0] — 2026-09-20 — NPC voices, the response window, a battle board, and a turn linter
 
 The largest release since 2.0. Every NPC can have their own voice. A failed
