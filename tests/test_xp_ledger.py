@@ -90,6 +90,34 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
+class CharacterNameTests(unittest.TestCase):
+    """A character name picks a file inside the campaign, never a path out of it."""
+
+    def setUp(self):
+        self._d = tempfile.TemporaryDirectory()
+        self.base = pathlib.Path(self._d.name)
+        self._orig = xp.CAMPAIGNS_DIR
+        xp.CAMPAIGNS_DIR = self.base
+        for c in ("c", "other"):
+            (self.base / c / "characters").mkdir(parents=True)
+        (self.base / "c" / "characters" / "aldric.md").write_text("x", encoding="utf-8")
+        (self.base / "other" / "characters" / "bob.md").write_text("x", encoding="utf-8")
+
+    def tearDown(self):
+        xp.CAMPAIGNS_DIR = self._orig
+        self._d.cleanup()
+
+    def test_a_name_finds_its_sheet(self):
+        self.assertEqual(xp._find_char_path("c", "Aldric").name, "aldric.md")
+
+    def test_a_path_is_refused(self):
+        for name in ("../../other/characters/bob", "..\\..\\other\\bob",
+                     "/etc/passwd", "..", ""):
+            with self.subTest(name=name):
+                with self.assertRaises(FileNotFoundError):
+                    xp._find_char_path("c", name)
+
+
 class CliWiringTests(unittest.TestCase):
     """The subcommand must be REGISTERED, not merely implemented.
 

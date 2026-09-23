@@ -203,8 +203,8 @@ def run(notation: str, silent: bool = False, label: str = "",
         chosen = max(total_a, total_b) if adv else min(total_a, total_b)
         lbl = "ADV" if adv else "DIS"
         if not silent:
-            print(f"[{lbl}] Roll A: {roll_a} = {total_a}{format_modifier(modifier)}")
-            print(f"[{lbl}] Roll B: {roll_b} = {total_b}{format_modifier(modifier)}")
+            print(f"[{lbl}] Roll A: {roll_a}{format_modifier(modifier)} = {total_a}")
+            print(f"[{lbl}] Roll B: {roll_b}{format_modifier(modifier)} = {total_b}")
             taken = "A" if (adv and total_a >= total_b) or (dis and total_a <= total_b) else "B"
             print(f"Takes roll {taken} → Total: {chosen}")
         return chosen
@@ -255,8 +255,8 @@ def _print_physical(res: dict, num_dice: int, die_size: int, modifier: int,
         ta = a + modifier
         tb = b + modifier
         taken = kept[0]
-        print(f"[{lbl}]{auto_tag} Roll A: [{a}] = {ta}{format_modifier(modifier)}")
-        print(f"[{lbl}]{auto_tag} Roll B: [{b}] = {tb}{format_modifier(modifier)}")
+        print(f"[{lbl}]{auto_tag} Roll A: [{a}]{format_modifier(modifier)} = {ta}")
+        print(f"[{lbl}]{auto_tag} Roll B: [{b}]{format_modifier(modifier)} = {tb}")
         which = "A" if a == taken and (adv and a >= b or dis and a <= b) else "B"
         print(f"Takes roll {which} → Total: {total}")
         return
